@@ -19,8 +19,20 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ── Helpers (secrets) ─────────────────────────────────────────────────────────
+def _get_secret(name: str, default: str = "") -> str:
+    """Read from env vars first, then Streamlit secrets (for Cloud deployment)."""
+    val = os.environ.get(name, "")
+    if not val:
+        try:
+            val = st.secrets.get(name, default)
+        except Exception:
+            val = default
+    return val
+
+
 # ── Microsoft Clarity ─────────────────────────────────────────────────────────
-_CLARITY_ID = os.environ.get("CLARITY_PROJECT_ID", "")
+_CLARITY_ID = _get_secret("CLARITY_PROJECT_ID")
 if _CLARITY_ID:
     st.markdown(f"""
     <script type="text/javascript">
@@ -268,7 +280,7 @@ Import json at the top. Use only pandas, numpy, json. Print ONLY the final JSON.
 # ── Helpers ───────────────────────────────────────────────────────────────────
 @st.cache_resource
 def get_client():
-    key = os.environ.get("ANTHROPIC_API_KEY","")
+    key = _get_secret("ANTHROPIC_API_KEY")
     if not key or key == "your_api_key_here":
         return None
     return Anthropic(api_key=key)
