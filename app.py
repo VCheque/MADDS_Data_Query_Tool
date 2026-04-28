@@ -314,6 +314,7 @@ def load_data(file_bytes: bytes) -> pd.DataFrame:
 
 
 def run_query(client: Anthropic, df: pd.DataFrame, question: str) -> dict:
+    import time
     complete = df[df["status"] == "Complete"] if "status" in df.columns else df
     system = SYSTEM_PROMPT_TEMPLATE.format(
         total=len(df), complete=len(complete), schema=SCHEMA_DESCRIPTION
@@ -330,18 +331,24 @@ def run_query(client: Anthropic, df: pd.DataFrame, question: str) -> dict:
     buf = io.StringIO()
     import contextlib
     local_vars = {"df": df.copy(), "pd": pd, "json": json}
+    exec_error = None
+    exec_seconds = 0.0
     try:
         import numpy as np
         local_vars["np"] = np
+        t0 = time.perf_counter()
         with contextlib.redirect_stdout(buf):
             exec(raw, local_vars)
+        exec_seconds = time.perf_counter() - t0
         output = buf.getvalue().strip()
         if not output:
             raise ValueError("Model returned code that produced no output")
         result = json.loads(output)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as e:
+        exec_error = f"Invalid JSON: {e}"
         result = {"answer": f"Analysis returned invalid JSON. Raw output: {buf.getvalue().strip()[:500]}"}
     except Exception as e:
+        exec_error = f"{type(e).__name__}: {e}"
         result = {"answer": f"Error executing analysis: {e}", "detail": raw[:500]}
 
     result["_usage"] = {
@@ -350,6 +357,10 @@ def run_query(client: Anthropic, df: pd.DataFrame, question: str) -> dict:
         "cache_creation": getattr(usage,"cache_creation_input_tokens",0),
         "cache_read":     getattr(usage,"cache_read_input_tokens",0),
     }
+    result["_code"] = raw
+    result["_stdout"] = buf.getvalue()
+    result["_exec_seconds"] = exec_seconds
+    result["_exec_error"] = exec_error
     return result
 
 
@@ -715,8 +726,34 @@ if st.session_state.get("history"):
                 unsafe_allow_html=True,
             )
 
+        # ── Generated Python code + execution details ─────────────────────────
+        code = result.get("_code", "")
+        stdout = result.get("_stdout", "")
+        exec_seconds = result.get("_exec_seconds", 0.0)
+        exec_error = result.get("_exec_error")
+        if code:
+            label = f"View generated code (ran in {exec_seconds*1000:.0f} ms)"
+            if exec_error:
+                label = f"⚠ View generated code — {exec_error}"
+            with st.expander(label):
+                st.markdown("**Python code Claude wrote and executed against your DataFrame:**")
+                st.code(code, language="python")
+                st.markdown('<div class="dl-btn">', unsafe_allow_html=True)
+                st.download_button(
+                    "⬇ Python",
+                    data=code.encode("utf-8"),
+                    file_name=f"query_{idx+1}.py",
+                    mime="text/x-python",
+                    key=f"dl_py_{idx}",
+                )
+                st.markdown('</div>', unsafe_allow_html=True)
+                if stdout:
+                    st.markdown("**Captured stdout (the JSON the code printed):**")
+                    st.code(stdout.strip(), language="json")
+
         # ── Raw JSON response ─────────────────────────────────────────────────
-        json_payload = {k: v for k, v in result.items() if k != "_usage"}
+        internal_keys = {"_usage", "_code", "_stdout", "_exec_seconds", "_exec_error"}
+        json_payload = {k: v for k, v in result.items() if k not in internal_keys}
         json_payload["_question"] = q
         json_str = json.dumps(json_payload, indent=2, default=str)
         with st.expander("View JSON response"):
