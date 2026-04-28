@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 .DS_Store
+*.docx
+~$*.docx
+query_log.jsonl
