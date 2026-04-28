@@ -249,27 +249,50 @@ EXAMPLES = [
 
 SYSTEM_PROMPT_TEMPLATE = """You are a data analyst for a harm reduction drug checking platform.
 You analyze a Python pandas DataFrame called `df` ({total} rows total, {complete} with status "Complete").
+Your job is to translate plain-English questions about the drug supply into reproducible pandas code
+that produces a single JSON object describing the answer plus the right kind of visual.
 
 COLUMN DEFINITIONS:
 {schema}
 
 ANALYSIS RULES:
-- ALWAYS filter to df[df['status'] == 'Complete'] unless the question says otherwise.
-- acquired_date is a pandas datetime column. Use pd.to_datetime() if needed.
-- AllIllicits and ActiveCuts are comma-separated strings. Use str.split(',') and str.strip().
-- All string comparisons must be case-insensitive. Use .str.lower() or .str.contains(..., case=False).
-- For percentages: round to 1 decimal place.
-- Guard against NaN values with .dropna() or .fillna('').
-- For monthly trends: use df['acquired_date'].dt.to_period('M').
+- ALWAYS filter to df[df['status'] == 'Complete'] unless the question explicitly asks otherwise. The
+  "Complete" subset is the only slice with fully coded lab columns; everything else is in-progress.
+- acquired_date is a pandas datetime64 column. Use pd.to_datetime(..., errors='coerce') if you have any
+  doubt about the dtype. For year filters use .dt.year; for month filters .dt.month; for date ranges
+  use boolean masks like (df['acquired_date'] >= '2024-01-01') & (df['acquired_date'] < '2025-01-01').
+- AllIllicits and ActiveCuts are comma-separated strings. Split with str.split(',') and trim each part
+  with str.strip(). To count occurrences across rows, use .explode() after splitting into a list.
+- confirmed_lab_substances and preliminary_ftir_substances are PIPE-separated (|), not comma-separated.
+  Split on '|' and strip whitespace.
+- All string comparisons must be case-insensitive. Prefer .str.lower() before equality checks, or
+  .str.contains(..., case=False, na=False) for substring matching. Always pass na=False so NaN rows
+  don't silently match.
+- For percentages: round to 1 decimal place. When reporting a percent, also include the numerator and
+  denominator in the answer text so the reader can sanity-check.
+- Guard against NaN values with .dropna() on the relevant column, or .fillna('') for string columns
+  before splitting. Never assume a column is fully populated.
+- For monthly trends: use df['acquired_date'].dt.to_period('M').dt.to_timestamp() to get month-start
+  datetimes that sort and plot correctly. For weekly, use .dt.to_period('W').
+- For top-N rankings, use .value_counts().head(N). For ranked lists by a custom metric, use
+  .groupby(...).agg(...).sort_values(..., ascending=False).head(N).
+- For polysubstance analysis: a sample is "polysubstance" when its AllIllicits string contains a comma
+  after stripping. Use df['AllIllicits'].fillna('').str.contains(',').
+- When the user asks about a specific substance (e.g., Fentanyl, Cocaine, Xylazine, Medetomidine),
+  match it inside AllIllicits using str.contains(name, case=False, na=False) on the comma-separated
+  string. This catches both primary and secondary detections.
 
 OUTPUT FORMAT — return a JSON object (and ONLY a JSON object, no markdown) with these fields:
 
-  "answer"   string   Plain-English summary with specific numbers. Always required.
-  "metrics"  array    Up to 4 objects {{label, value}} for headline numbers. Optional.
+  "answer"   string   Plain-English summary with specific numbers. Always required. Lead with the
+                      headline number, then the context. Mention sample size and time window.
+  "metrics"  array    Up to 4 objects {{label, value}} for headline numbers. Optional but encouraged
+                      whenever the answer revolves around 1-4 key statistics.
   "chart"    object   Chart specification. Optional. See below.
   "table"    object   Table specification. Optional. See below.
   "list"     object   Ranked list. Optional. See below.
-  "detail"   string   One-line methodology note. Optional.
+  "detail"   string   One-line methodology note explaining filters or assumptions. Optional but
+                      encouraged when the analysis involved a non-obvious filter.
 
 CHOOSE THE RIGHT OUTPUT TYPE:
 - Rankings / top-N / distributions  ->  chart (bar) or list
@@ -278,20 +301,77 @@ CHOOSE THE RIGHT OUTPUT TYPE:
 - Multi-column comparisons          ->  table
 - Simple enumeration                ->  list
 - Single statistic                  ->  metrics only
+- Statistical test result           ->  metrics for the test stat / p-value, plus answer text
+                                        explaining what it means in plain English
 
 CHART SPEC:
 {{"type": "bar"|"line"|"pie", "labels": [...], "values": [...], "label": "Series name", "colors": true|false}}
-  colors true  = one distinct color per bar/slice
-  colors false = all bars single teal color
+  - labels and values must be the SAME LENGTH. Never return mismatched lengths.
+  - For line charts of monthly trends, format labels as "Jan 2024", "Feb 2024", ... (use strftime("%b %Y")).
+  - colors true  = one distinct color per bar/slice (good for categorical data with distinct groups)
+  - colors false = all bars single teal color (good for ranked/ordered data of one type)
 
 TABLE SPEC:
 {{"headers": ["Col1", "Col2", ...], "rows": [["v", "v", ...], ...]}}  // max 50 rows
+  - Convert all cell values to strings or simple types (int, float). No nested objects.
+  - Format numbers with thousands separators in the answer text but keep raw numbers in the table cells.
 
 LIST SPEC:
-{{"items": [{{"label": "...", "value": "..."}}]}}  // max 20 items, sorted descending
+{{"items": [{{"label": "...", "value": "..."}}]}}  // max 20 items, sorted descending by numeric value
 
-IMPORTANT: Write Python code using the DataFrame `df`, then end with: print(json.dumps(result))
-Import json at the top. Use only pandas, numpy, json. Print ONLY the final JSON."""
+STATISTICAL TESTS YOU CAN RUN:
+The user may ask for these directly. Use scipy.stats (already importable as scipy.stats) when needed.
+Always return: the test statistic, the p-value, degrees of freedom (when applicable), and a one-sentence
+plain-English interpretation. Use metrics for the numbers and answer for the interpretation.
+
+  - Mann-Kendall trend test for monotonic trend over time (e.g., monthly fentanyl detections).
+    Use scipy.stats.kendalltau on (month_index, monthly_count). Report tau and p-value.
+  - Two-proportion z-test for comparing two percentages (e.g., xylazine rate in MA vs RI).
+    Use statsmodels.stats.proportion.proportions_ztest, or compute manually with scipy.stats.norm.
+  - Chi-square test of independence for categorical co-occurrence (e.g., DrugClass x State).
+    Build a pandas crosstab then pass to scipy.stats.chi2_contingency. Report chi2, dof, p-value.
+  - Fisher's exact test for 2x2 categorical with small counts. Use scipy.stats.fisher_exact.
+  - Independent t-test or Mann-Whitney U for comparing two groups of counts.
+    Use scipy.stats.ttest_ind or scipy.stats.mannwhitneyu. Mann-Whitney is safer for skewed counts.
+  - Cohen's kappa for agreement between FTIR preliminary and confirmed lab substances.
+    Use sklearn.metrics.cohen_kappa_score on aligned binary indicators per substance.
+  - 95% confidence interval for a proportion: use statsmodels.stats.proportion.proportion_confint
+    with method='wilson' (more accurate than normal approximation for small samples).
+
+EXAMPLE PATTERNS (illustrative — not the actual data):
+
+Question: "Top 5 active cuts in 2024"
+Approach: filter Complete + year 2024 -> split ActiveCuts on "," -> explode -> strip -> drop empty
+and "None Detected" -> value_counts -> head(5). Return as bar chart with colors:false. Include a
+"detail" note: "Counts each appearance once per sample where the cut was detected."
+
+Question: "What percent of cocaine samples also contained fentanyl in MA?"
+Approach: filter Complete + state == "Massachusetts". Mask cocaine via
+AllIllicits.str.contains("cocaine", case=False, na=False). Within that subset, mask fentanyl with the
+same pattern. Compute (fent_count / coke_count) * 100, round to 1 decimal. Return metrics for
+{{Cocaine Samples, Both Detected, Co-occurrence Rate}} plus a one-sentence answer.
+
+Question: "Monthly fentanyl trend over the past year, with data labels"
+Approach: filter Complete + AllIllicits contains fentanyl + last 12 months. Group by
+acquired_date.dt.to_period('M'), count. Format labels as "Jan 2024" via strftime. Return as line chart.
+Add metrics for {{Total Samples, Months with Data, Peak Month Count}}.
+
+Question: "Run a chi-square test of independence between PrimaryDrugClass and StateofOriginCleaned"
+Approach: filter Complete, drop NaNs in both columns, build pd.crosstab, pass to
+scipy.stats.chi2_contingency. Return metrics for {{chi2, dof, p-value}} and an answer that
+interprets the p-value: "p < 0.05 suggests drug class composition differs significantly across states."
+
+IMPORTANT EXECUTION RULES:
+- Write Python code using the DataFrame `df`, then end with: print(json.dumps(result, default=str))
+- Import json at the top of your code. You may use pandas, numpy, json, scipy.stats, sklearn.metrics,
+  and statsmodels — all are available.
+- Print ONLY the final JSON. Do not include explanatory print statements, debug output, or markdown
+  code fences in the printed output.
+- Always wrap the final dict in json.dumps with default=str so datetime/Period values serialize cleanly.
+- Keep label strings short enough to fit a chart axis (under ~30 characters each).
+- For chart values, convert numpy ints/floats to native Python (int(x), float(x)) so JSON serializes.
+- If the question is ambiguous, make a reasonable choice and explain it in the "detail" field rather
+  than refusing to answer."""
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -311,6 +391,112 @@ def load_data(file_bytes: bytes) -> pd.DataFrame:
     if "acquired_date" in df.columns:
         df["acquired_date"] = pd.to_datetime(df["acquired_date"], errors="coerce")
     return df
+
+
+_LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "query_log.jsonl")
+
+
+def _github_log_push(record_line: str) -> None:
+    """Append one record to query_log.jsonl on GitHub. Silent on failure.
+
+    Requires Streamlit secrets:
+      GITHUB_TOKEN     fine-grained PAT with Contents: read & write
+      GITHUB_LOG_REPO  e.g. "VCheque/MADDS_Data_Query_Tool"
+    Optional:
+      GITHUB_LOG_BRANCH (default: "logs")
+      GITHUB_LOG_PATH   (default: "query_log.jsonl")
+    """
+    import urllib.request, urllib.error, base64
+
+    token = _get_secret("GITHUB_TOKEN")
+    repo = _get_secret("GITHUB_LOG_REPO")
+    if not (token and repo):
+        return
+    branch = _get_secret("GITHUB_LOG_BRANCH") or "logs"
+    path = _get_secret("GITHUB_LOG_PATH") or "query_log.jsonl"
+
+    api = f"https://api.github.com/repos/{repo}/contents/{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "streetcheck-data-query",
+    }
+
+    def _attempt():
+        sha = None
+        current = b""
+        try:
+            req = urllib.request.Request(f"{api}?ref={branch}", headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as r:
+                data = json.loads(r.read())
+                sha = data["sha"]
+                current = base64.b64decode(data["content"])
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+        new_content = current + record_line.encode("utf-8")
+        payload = {
+            "message": "log: append query",
+            "content": base64.b64encode(new_content).decode("ascii"),
+            "branch": branch,
+        }
+        if sha:
+            payload["sha"] = sha
+        req = urllib.request.Request(
+            api,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={**headers, "Content-Type": "application/json"},
+            method="PUT",
+        )
+        urllib.request.urlopen(req, timeout=10).read()
+
+    try:
+        _attempt()
+    except urllib.error.HTTPError as e:
+        if e.code == 409:  # SHA conflict — retry once with fresh SHA
+            try:
+                _attempt()
+            except Exception:
+                pass
+    except Exception:
+        pass  # silent failure
+
+
+def log_query(question: str, result: dict, df_rows: int) -> None:
+    """Log a query both locally and to GitHub (background thread).
+
+    Logs only the question text, timestamp, and execution metadata.
+    Never logs the spreadsheet contents or generated code.
+    """
+    try:
+        from datetime import datetime, timezone
+        import threading
+        usage = result.get("_usage", {}) or {}
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "question": question,
+            "rows_in_dataset": df_rows,
+            "success": result.get("_exec_error") is None,
+            "exec_ms": round(result.get("_exec_seconds", 0.0) * 1000, 1),
+            "input_tokens": usage.get("input_tokens", 0),
+            "output_tokens": usage.get("output_tokens", 0),
+            "cache_read": usage.get("cache_read", 0),
+            "cache_creation": usage.get("cache_creation", 0),
+            "error": result.get("_exec_error"),
+        }
+        line = json.dumps(record, ensure_ascii=False) + "\n"
+        # Local log (ephemeral on Streamlit Cloud, persistent locally)
+        try:
+            with open(_LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(line)
+        except Exception:
+            pass
+        # GitHub push (fire-and-forget; never blocks the user)
+        threading.Thread(
+            target=_github_log_push, args=(line,), daemon=True,
+        ).start()
+    except Exception:
+        pass
 
 
 def run_query(client: Anthropic, df: pd.DataFrame, question: str) -> dict:
@@ -373,12 +559,13 @@ def make_chart(spec: dict) -> go.Figure:
     use_colors = spec.get("colors", False)
 
     layout_base = dict(
-        margin=dict(l=10,r=10,t=30,b=10),
-        height=320,
+        margin=dict(l=70, r=30, t=40, b=80),
+        height=380,
         plot_bgcolor="white",
         paper_bgcolor="white",
-        font=dict(family="Inter, sans-serif", color=COLORS["navy"], size=12),
+        font=dict(family="Inter, sans-serif", color=COLORS["navy"], size=13),
     )
+    axis_tickfont = dict(color=COLORS["navy"], size=12)
 
     if chart_type == "bar":
         bar_colors = (
@@ -392,8 +579,8 @@ def make_chart(spec: dict) -> go.Figure:
         )
         fig.update_layout(
             **layout_base,
-            xaxis=dict(tickangle=-35, showgrid=False, linecolor=COLORS["border"]),
-            yaxis=dict(gridcolor=COLORS["border"], linecolor=COLORS["border"]),
+            xaxis=dict(tickangle=-30, showgrid=False, linecolor=COLORS["border"], tickfont=axis_tickfont),
+            yaxis=dict(gridcolor=COLORS["border"], linecolor=COLORS["border"], tickfont=axis_tickfont),
             showlegend=False,
         )
 
@@ -403,12 +590,12 @@ def make_chart(spec: dict) -> go.Figure:
             x=labels, y=values, name=label,
             mode="lines+markers",
             line_color=COLORS["teal"], line_width=2.5,
-            marker_color=COLORS["teal"], marker_size=5,
+            marker_color=COLORS["teal"], marker_size=6,
         )
         fig.update_layout(
             **layout_base,
-            xaxis=dict(tickangle=-35, showgrid=False, linecolor=COLORS["border"]),
-            yaxis=dict(gridcolor=COLORS["border"], linecolor=COLORS["border"]),
+            xaxis=dict(tickangle=-30, showgrid=False, linecolor=COLORS["border"], tickfont=axis_tickfont),
+            yaxis=dict(gridcolor=COLORS["border"], linecolor=COLORS["border"], tickfont=axis_tickfont),
         )
 
     elif chart_type == "pie":
@@ -417,7 +604,7 @@ def make_chart(spec: dict) -> go.Figure:
             labels=labels, values=values, hole=0.38,
             marker_colors=CAT_COLORS[:len(labels)],
             marker_line_color="white", marker_line_width=2,
-            textinfo="label+percent", textfont_size=12,
+            textinfo="label+percent", textfont_size=13,
         )
         fig.update_layout(**layout_base)
 
@@ -427,8 +614,158 @@ def make_chart(spec: dict) -> go.Figure:
     return fig
 
 
-def fig_to_png_bytes(fig: go.Figure) -> bytes:
-    return fig.to_image(format="png", scale=2)
+def fig_to_png_bytes(fig: go.Figure, width: int = 1200, height: int = 600) -> bytes:
+    """Render a Plotly figure to PNG with explicit dimensions to avoid label cropping."""
+    return fig.to_image(format="png", width=width, height=height, scale=2)
+
+
+# ── Story-slide composer (1920x1080 PNG with answer + metrics + chart) ────────
+def _get_slide_font(size: int, bold: bool = False):
+    from PIL import ImageFont
+    candidates = [
+        # macOS
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/Library/Fonts/Arial Bold.ttf" if bold else "/Library/Fonts/Arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        # Linux (Streamlit Cloud)
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    ]
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+    return ImageFont.load_default()
+
+
+def _wrap_text(text: str, font, max_width: int, draw) -> list:
+    """Word-wrap text to fit within max_width pixels."""
+    words = str(text).split()
+    if not words:
+        return [""]
+    lines, current = [], []
+    for word in words:
+        test = " ".join(current + [word])
+        bbox = draw.textbbox((0, 0), test, font=font)
+        if bbox[2] - bbox[0] <= max_width:
+            current.append(word)
+        else:
+            if current:
+                lines.append(" ".join(current))
+            current = [word]
+    if current:
+        lines.append(" ".join(current))
+    return lines
+
+
+def compose_story_png(question: str, answer: str, metrics: list, fig: go.Figure) -> bytes:
+    """Compose a 1920x1080 slide PNG with question, answer, metrics, and chart.
+
+    Designed to drop straight onto a PowerPoint slide as a complete story.
+    """
+    from PIL import Image, ImageDraw
+    from datetime import datetime
+
+    W, H = 1920, 1080
+    PAD = 60
+
+    # Brand colors as RGB tuples
+    NAVY    = (26, 43, 60)
+    CARD    = (36, 53, 70)
+    BORDER  = (60, 80, 100)
+    TEAL    = (0, 133, 122)
+    WHITE   = (255, 255, 255)
+    MUTED   = (180, 190, 200)
+
+    img = Image.new("RGB", (W, H), NAVY)
+    draw = ImageDraw.Draw(img)
+
+    f_q  = _get_slide_font(20, bold=True)
+    f_a  = _get_slide_font(30)
+    f_ml = _get_slide_font(15, bold=True)
+    f_mv = _get_slide_font(60, bold=True)
+    f_ft = _get_slide_font(15)
+
+    card_x, card_y, card_w = PAD, PAD, W - 2 * PAD
+    inner_pad = 32
+
+    # ─── Question + Answer card ──────────────────────────────────────
+    q_lines = _wrap_text(question.upper(), f_q, card_w - 2 * inner_pad, draw)
+    a_lines = _wrap_text(answer or "", f_a, card_w - 2 * inner_pad, draw)
+    line_h_q, line_h_a = 30, 44
+    qa_h = inner_pad + len(q_lines) * line_h_q + 14 + 14 + len(a_lines) * line_h_a + inner_pad
+
+    draw.rounded_rectangle(
+        [card_x, card_y, card_x + card_w, card_y + qa_h],
+        radius=14, fill=CARD, outline=BORDER, width=1,
+    )
+    y = card_y + inner_pad
+    for line in q_lines:
+        draw.text((card_x + inner_pad, y), line, font=f_q, fill=MUTED)
+        y += line_h_q
+    y += 8
+    draw.line(
+        [(card_x + inner_pad, y), (card_x + card_w - inner_pad, y)],
+        fill=BORDER, width=1,
+    )
+    y += 14
+    for line in a_lines:
+        draw.text((card_x + inner_pad, y), line, font=f_a, fill=WHITE)
+        y += line_h_a
+
+    # ─── Metric cards row ────────────────────────────────────────────
+    metrics = (metrics or [])[:4]
+    metric_y = card_y + qa_h + 24
+    metric_h = 0
+    if metrics:
+        metric_h = 140
+        gap = 20
+        mw = (card_w - (len(metrics) - 1) * gap) // len(metrics)
+        for i, m in enumerate(metrics):
+            mx = card_x + i * (mw + gap)
+            draw.rounded_rectangle(
+                [mx, metric_y, mx + mw, metric_y + metric_h],
+                radius=10, fill=CARD, outline=BORDER, width=1,
+            )
+            draw.text((mx + 24, metric_y + 22), str(m.get("label", "")).upper(), font=f_ml, fill=MUTED)
+            draw.text((mx + 24, metric_y + 54), str(m.get("value", "")), font=f_mv, fill=TEAL)
+
+    # ─── Chart (rendered with dark theme to match the slide) ─────────
+    chart_y = metric_y + (metric_h + 24 if metric_h else 0)
+    chart_h = H - chart_y - PAD - 30
+    chart_w = card_w
+
+    fig_dark = go.Figure(fig)
+    fig_dark.update_layout(
+        plot_bgcolor="#243546",
+        paper_bgcolor="#243546",
+        font=dict(family="Arial, sans-serif", color="#FFFFFF", size=18),
+        xaxis=dict(
+            tickfont=dict(color="#FFFFFF", size=15),
+            linecolor="#506070", gridcolor="#506070",
+        ),
+        yaxis=dict(
+            tickfont=dict(color="#FFFFFF", size=15),
+            linecolor="#506070", gridcolor="#506070",
+        ),
+        margin=dict(l=90, r=40, t=40, b=110),
+    )
+    chart_png = fig_dark.to_image(format="png", width=chart_w, height=chart_h, scale=2)
+    chart_img = Image.open(io.BytesIO(chart_png)).convert("RGB")
+    chart_img = chart_img.resize((chart_w, chart_h), Image.LANCZOS)
+    img.paste(chart_img, (card_x, chart_y))
+
+    # ─── Footer ──────────────────────────────────────────────────────
+    footer = (
+        f"StreetCheck Drug Supply Data Query  \u00B7  OPIC at Brandeis University  "
+        f"\u00B7  {datetime.now().strftime('%Y-%m-%d')}"
+    )
+    draw.text((PAD, H - PAD + 6), footer, font=f_ft, fill=MUTED)
+
+    out = io.BytesIO()
+    img.save(out, format="PNG", optimize=True)
+    return out.getvalue()
 
 
 def df_to_csv_bytes(df: pd.DataFrame) -> bytes:
@@ -542,6 +879,14 @@ def set_example(text: str):
     st.session_state["question_input"] = text
 
 
+def submit_question():
+    """Capture the question and clear the input box (must run before the next rerun)."""
+    q = st.session_state.get("question_input", "").strip()
+    if q:
+        st.session_state["_pending_question"] = q
+        st.session_state["question_input"] = ""
+
+
 ex_cols = st.columns(4)
 for i, ex in enumerate(EXAMPLES[:4]):
     with ex_cols[i]:
@@ -558,16 +903,17 @@ st.text_area(
 
 ask_col, _ = st.columns([1, 6])
 with ask_col:
-    ask = st.button("Ask →", type="primary", use_container_width=True)
+    st.button("Ask →", type="primary", use_container_width=True, on_click=submit_question)
 
 # ── Run query ─────────────────────────────────────────────────────────────────
-question = st.session_state.get("question_input", "")
-if ask and question.strip():
+pending_question = st.session_state.pop("_pending_question", None)
+if pending_question:
     with st.spinner("Analyzing..."):
-        result = run_query(client, df, question.strip())
+        result = run_query(client, df, pending_question)
+    log_query(pending_question, result, df_rows=len(df))
     if "history" not in st.session_state:
         st.session_state["history"] = []
-    st.session_state["history"].insert(0, (question.strip(), result))
+    st.session_state["history"].insert(0, (pending_question, result))
 
 # ── Render history ────────────────────────────────────────────────────────────
 if st.session_state.get("history"):
@@ -598,12 +944,23 @@ if st.session_state.get("history"):
             st.markdown("<br>", unsafe_allow_html=True)
 
         # ── Chart ─────────────────────────────────────────────────────────────
-        if result.get("chart"):
-            fig = make_chart(result["chart"])
+        chart_spec = result.get("chart") or {}
+        chart_labels = chart_spec.get("labels") or []
+        chart_values = chart_spec.get("values") or []
+        chart_renderable = (
+            chart_spec
+            and chart_labels
+            and chart_values
+            and len(chart_labels) == len(chart_values)
+        )
+        if chart_spec and not chart_renderable:
+            st.info("⚠️ The analysis didn't return enough chart data. Try rephrasing your question or being more specific.")
+        if chart_renderable:
+            fig = make_chart(chart_spec)
             st.plotly_chart(fig, use_container_width=True, key=f"chart_{idx}")
 
             # Download buttons for chart
-            dl1, dl2, dl3 = st.columns([1, 1, 6])
+            dl1, dl2, dl3, dl4 = st.columns([1, 1, 1, 5])
             with dl1:
                 try:
                     png_bytes = fig_to_png_bytes(fig)
@@ -619,20 +976,47 @@ if st.session_state.get("history"):
                 except Exception:
                     pass  # kaleido not installed — skip PNG download
             with dl2:
-                st.markdown('<div class="dl-btn">', unsafe_allow_html=True)
-                chart_spec = result["chart"]
-                chart_df = pd.DataFrame({
-                    chart_spec.get("label","value"): chart_spec.get("values",[]),
-                }, index=chart_spec.get("labels",[]))
-                chart_df.index.name = "label"
-                st.download_button(
-                    "⬇ CSV",
-                    data=df_to_csv_bytes(chart_df.reset_index()),
-                    file_name=f"chart_{idx+1}.csv",
-                    mime="text/csv",
-                    key=f"dl_chart_csv_{idx}",
-                )
-                st.markdown('</div>', unsafe_allow_html=True)
+                labels = chart_spec.get("labels", []) or []
+                values = chart_spec.get("values", []) or []
+                # Pad the shorter list with None so DataFrame construction never
+                # crashes when the model returns mismatched labels/values.
+                n = max(len(labels), len(values))
+                labels = list(labels) + [None] * (n - len(labels))
+                values = list(values) + [None] * (n - len(values))
+                if n > 0:
+                    chart_df = pd.DataFrame({
+                        chart_spec.get("label", "value"): values,
+                    }, index=labels)
+                    chart_df.index.name = "label"
+                    st.markdown('<div class="dl-btn">', unsafe_allow_html=True)
+                    st.download_button(
+                        "⬇ CSV",
+                        data=df_to_csv_bytes(chart_df.reset_index()),
+                        file_name=f"chart_{idx+1}.csv",
+                        mime="text/csv",
+                        key=f"dl_chart_csv_{idx}",
+                    )
+                    st.markdown('</div>', unsafe_allow_html=True)
+            with dl3:
+                try:
+                    slide_bytes = compose_story_png(
+                        question=q,
+                        answer=result.get("answer", ""),
+                        metrics=result.get("metrics", []),
+                        fig=fig,
+                    )
+                    st.markdown('<div class="dl-btn">', unsafe_allow_html=True)
+                    st.download_button(
+                        "⬇ Slide",
+                        data=slide_bytes,
+                        file_name=f"slide_{idx+1}.png",
+                        mime="image/png",
+                        key=f"dl_slide_{idx}",
+                        help="1920×1080 PowerPoint-ready slide with the answer, metrics, and chart bundled together.",
+                    )
+                    st.markdown('</div>', unsafe_allow_html=True)
+                except Exception:
+                    pass  # PIL or kaleido missing — skip slide download
 
         # ── Table ─────────────────────────────────────────────────────────────
         if result.get("table"):
@@ -717,55 +1101,15 @@ if st.session_state.get("history"):
             cache_write = usage.get("cache_creation", 0)
             if cache_read > 0:
                 badge = f'<span class="cache-hit">⚡ cache hit</span> — {cache_read:,} tokens read from cache'
-            else:
+            elif cache_write > 0:
                 badge = f'<span class="cache-miss">cache write</span> — {cache_write:,} tokens cached for next call'
+            else:
+                badge = '<span class="cache-miss">cache inactive</span> — prompt below cache threshold'
             st.markdown(
                 f'<div class="token-badge">{badge} &nbsp;·&nbsp; '
                 f'{usage.get("input_tokens",0):,} in &nbsp;·&nbsp; '
                 f'{usage.get("output_tokens",0):,} out</div>',
                 unsafe_allow_html=True,
             )
-
-        # ── Generated Python code + execution details ─────────────────────────
-        code = result.get("_code", "")
-        stdout = result.get("_stdout", "")
-        exec_seconds = result.get("_exec_seconds", 0.0)
-        exec_error = result.get("_exec_error")
-        if code:
-            label = f"View generated code (ran in {exec_seconds*1000:.0f} ms)"
-            if exec_error:
-                label = f"⚠ View generated code — {exec_error}"
-            with st.expander(label):
-                st.markdown("**Python code Claude wrote and executed against your DataFrame:**")
-                st.code(code, language="python")
-                st.markdown('<div class="dl-btn">', unsafe_allow_html=True)
-                st.download_button(
-                    "⬇ Python",
-                    data=code.encode("utf-8"),
-                    file_name=f"query_{idx+1}.py",
-                    mime="text/x-python",
-                    key=f"dl_py_{idx}",
-                )
-                st.markdown('</div>', unsafe_allow_html=True)
-                if stdout:
-                    st.markdown("**Captured stdout (the JSON the code printed):**")
-                    st.code(stdout.strip(), language="json")
-
-        # ── Raw JSON response ─────────────────────────────────────────────────
-        internal_keys = {"_usage", "_code", "_stdout", "_exec_seconds", "_exec_error"}
-        json_payload = {k: v for k, v in result.items() if k not in internal_keys}
-        json_payload["_question"] = q
-        json_str = json.dumps(json_payload, indent=2, default=str)
-        with st.expander("View JSON response"):
-            st.json(json_payload)
-            st.markdown('<div class="dl-btn">', unsafe_allow_html=True)
-            st.download_button(
-                "⬇ JSON",
-                data=json_str.encode("utf-8"),
-                file_name=f"response_{idx+1}.json",
-                mime="application/json",
-                key=f"dl_json_{idx}",
-            )
-            st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown("---")
