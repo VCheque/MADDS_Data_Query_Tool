@@ -973,8 +973,8 @@ if st.session_state.get("history"):
                         key=f"dl_png_{idx}",
                     )
                     st.markdown('</div>', unsafe_allow_html=True)
-                except Exception:
-                    pass  # kaleido not installed — skip PNG download
+                except Exception as e:
+                    st.caption(f"⚠ PNG unavailable: {type(e).__name__}: {e}")
             with dl2:
                 labels = chart_spec.get("labels", []) or []
                 values = chart_spec.get("values", []) or []
@@ -1015,8 +1015,8 @@ if st.session_state.get("history"):
                         help="1920×1080 PowerPoint-ready slide with the answer, metrics, and chart bundled together.",
                     )
                     st.markdown('</div>', unsafe_allow_html=True)
-                except Exception:
-                    pass  # PIL or kaleido missing — skip slide download
+                except Exception as e:
+                    st.caption(f"⚠ Slide unavailable: {type(e).__name__}: {e}")
 
         # ── Table ─────────────────────────────────────────────────────────────
         if result.get("table"):
