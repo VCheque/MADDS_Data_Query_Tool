@@ -238,7 +238,7 @@ SCHEMA_DESCRIPTION = """
 EXAMPLES = [
     "Bar chart of top 10 active cuts in 2024",
     "Line chart of monthly Fentanyl sample count",
-    "Pie chart of primary drug classes",
+    "Is Medetomidine independent of Xylazine in fentanyl-positive samples? Run a chi-square test",
     "Table of sample counts by state",
     "List all unique active cuts detected",
     "% of cocaine samples that also contained fentanyl",
@@ -825,7 +825,7 @@ with st.sidebar:
     for ex in EXAMPLES[:5]:
         st.markdown(f"- {ex}")
     st.markdown("---")
-    st.caption("Data stays in your session.\nOnly your question is sent to the API.")
+    st.caption("Data stays in your session.\n")
 
 
 # ── Header ────────────────────────────────────────────────────────────────────
