@@ -852,7 +852,7 @@ if client is None:
     st.stop()
 
 if uploaded is None:
-    st.info("👈  Upload your Excel file in the sidebar to get started.")
+    st.info("👈  Upload VizDat file from Box in the sidebar to get started.")
     st.stop()
 
 # Cache file bytes in session_state so re-runs don't re-read an exhausted file object
