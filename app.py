@@ -715,4 +715,20 @@ if st.session_state.get("history"):
                 unsafe_allow_html=True,
             )
 
+        # ── Raw JSON response ─────────────────────────────────────────────────
+        json_payload = {k: v for k, v in result.items() if k != "_usage"}
+        json_payload["_question"] = q
+        json_str = json.dumps(json_payload, indent=2, default=str)
+        with st.expander("View JSON response"):
+            st.json(json_payload)
+            st.markdown('<div class="dl-btn">', unsafe_allow_html=True)
+            st.download_button(
+                "⬇ JSON",
+                data=json_str.encode("utf-8"),
+                file_name=f"response_{idx+1}.json",
+                mime="application/json",
+                key=f"dl_json_{idx}",
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
+
         st.markdown("---")
