@@ -5,3 +5,4 @@ __pycache__/
 *.docx
 ~$*.docx
 query_log.jsonl
+code_cache.json

@@ -3,6 +3,7 @@ import io
 import json
 import re
 import base64
+import hashlib
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
@@ -268,12 +269,34 @@ ANALYSIS RULES:
 - All string comparisons must be case-insensitive. Prefer .str.lower() before equality checks, or
   .str.contains(..., case=False, na=False) for substring matching. Always pass na=False so NaN rows
   don't silently match.
+- INDEX ALIGNMENT RULE: when filtering an already-filtered DataFrame, build the boolean mask FROM
+  THAT FILTERED DataFrame, not from the original df. Otherwise pandas warns
+  "Boolean Series key will be reindexed to match DataFrame index" and may match the wrong rows.
+  Examples:
+    # WRONG — mask is from `df`, used on `df_complete` (different index):
+    df_complete = df[df['status'] == 'Complete']
+    mask = df['AllIllicits'].str.contains('fentanyl', case=False, na=False)
+    out = df_complete[mask]
+    # RIGHT — both built from the same df:
+    df_complete = df[df['status'] == 'Complete']
+    mask = df_complete['AllIllicits'].str.contains('fentanyl', case=False, na=False)
+    out = df_complete[mask]
+  Equivalently, chain the filters: df[df['status'] == 'Complete' & df['AllIllicits'].str.contains(...)].
 - For percentages: round to 1 decimal place. When reporting a percent, also include the numerator and
   denominator in the answer text so the reader can sanity-check.
 - Guard against NaN values with .dropna() on the relevant column, or .fillna('') for string columns
   before splitting. Never assume a column is fully populated.
 - For monthly trends: use df['acquired_date'].dt.to_period('M').dt.to_timestamp() to get month-start
   datetimes that sort and plot correctly. For weekly, use .dt.to_period('W').
+- For RELATIVE date language ("this year", "last month", "last 6 months", "this quarter", "today",
+  "year to date"): NEVER hard-code specific years or dates. Compute them at runtime using
+  pd.Timestamp.now() / pd.Timestamp.today() so the same code stays correct over time.
+  Examples:
+    "this year"        -> df[df['acquired_date'].dt.year == pd.Timestamp.now().year]
+    "last 6 months"    -> df[df['acquired_date'] >= (pd.Timestamp.now() - pd.DateOffset(months=6))]
+    "year to date"     -> df[(df['acquired_date'].dt.year == pd.Timestamp.now().year)
+                            & (df['acquired_date'] <= pd.Timestamp.now())]
+  Hard-code the year ONLY when the user explicitly says it (e.g., "in 2024", "during 2023").
 - For top-N rankings, use .value_counts().head(N). For ranked lists by a custom metric, use
   .groupby(...).agg(...).sort_values(..., ascending=False).head(N).
 - For polysubstance analysis: a sample is "polysubstance" when its AllIllicits string contains a comma
@@ -499,8 +522,237 @@ def log_query(question: str, result: dict, df_rows: int) -> None:
         pass
 
 
+# ── Generated-code cache ──────────────────────────────────────────────────────
+# Caches the Python code Claude generates per (question, prompt-signature) pair.
+# Lets repeat questions execute locally with no API call. Cache is loaded eagerly
+# from GitHub on first use, persisted locally, and pushed back to GitHub in the
+# background on every miss. Invisible to end users.
+_CACHE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "code_cache.json")
+_CACHE_GH_PATH = "code_cache.json"
+
+
+def _prompt_signature() -> str:
+    """Hash the system prompt + schema, normalized for whitespace.
+
+    Trivial reformatting won't bust the cache, but any meaningful content
+    change will. Returned as a 12-char hex prefix.
+    """
+    full = SCHEMA_DESCRIPTION + "\n" + SYSTEM_PROMPT_TEMPLATE
+    normalized = "\n".join(
+        line.strip() for line in full.strip().splitlines() if line.strip()
+    )
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
+
+
+def _cache_key(question: str, signature: str) -> str:
+    """Stable key from a normalized question and the prompt signature."""
+    normalized_q = " ".join(question.lower().strip().split())
+    return hashlib.sha256(f"{normalized_q}|{signature}".encode("utf-8")).hexdigest()[:16]
+
+
+def _github_cache_fetch() -> dict:
+    """Pull code_cache.json from the logs branch on GitHub.
+
+    Returns {} on any failure (missing file, no token configured, network error)
+    so a cache miss is the worst case, never a crash.
+    """
+    import urllib.request, urllib.error, base64 as b64
+    token = _get_secret("GITHUB_TOKEN")
+    repo = _get_secret("GITHUB_LOG_REPO")
+    if not (token and repo):
+        return {}
+    branch = _get_secret("GITHUB_LOG_BRANCH") or "logs"
+    api = f"https://api.github.com/repos/{repo}/contents/{_CACHE_GH_PATH}?ref={branch}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "streetcheck-data-query",
+    }
+    try:
+        req = urllib.request.Request(api, headers=headers)
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.loads(r.read())
+            content = b64.b64decode(data["content"]).decode("utf-8")
+            return json.loads(content) if content.strip() else {}
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {}
+        return {}
+    except Exception:
+        return {}
+
+
+@st.cache_resource
+def _load_cache() -> dict:
+    """Eager load: pulls cache from GitHub once per Streamlit container.
+
+    Falls back to local file if GitHub isn't configured / fails.
+    """
+    cache = _github_cache_fetch()
+    if not cache:
+        # Local fallback (works in dev; ephemeral on Streamlit Cloud)
+        try:
+            if os.path.exists(_CACHE_PATH):
+                with open(_CACHE_PATH, "r", encoding="utf-8") as f:
+                    cache = json.load(f) or {}
+        except Exception:
+            cache = {}
+    return cache
+
+
+def _save_cache_local(cache: dict) -> None:
+    """Persist the full cache to the local file. Silent on failure."""
+    try:
+        with open(_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _github_cache_push(cache_snapshot: dict) -> None:
+    """Replace code_cache.json on the logs branch with the given snapshot.
+
+    Background thread; silent on failure. One retry on SHA conflict.
+    """
+    import urllib.request, urllib.error, base64 as b64
+    token = _get_secret("GITHUB_TOKEN")
+    repo = _get_secret("GITHUB_LOG_REPO")
+    if not (token and repo):
+        return
+    branch = _get_secret("GITHUB_LOG_BRANCH") or "logs"
+    api = f"https://api.github.com/repos/{repo}/contents/{_CACHE_GH_PATH}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "streetcheck-data-query",
+    }
+
+    def _attempt():
+        sha = None
+        try:
+            req = urllib.request.Request(f"{api}?ref={branch}", headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as r:
+                sha = json.loads(r.read())["sha"]
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                raise
+        body = json.dumps(cache_snapshot, ensure_ascii=False, indent=2).encode("utf-8")
+        payload = {
+            "message": "cache: update generated-code cache",
+            "content": b64.b64encode(body).decode("ascii"),
+            "branch": branch,
+        }
+        if sha:
+            payload["sha"] = sha
+        req = urllib.request.Request(
+            api, data=json.dumps(payload).encode("utf-8"),
+            headers={**headers, "Content-Type": "application/json"},
+            method="PUT",
+        )
+        urllib.request.urlopen(req, timeout=10).read()
+
+    try:
+        _attempt()
+    except urllib.error.HTTPError as e:
+        if e.code == 409:
+            try:
+                _attempt()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _exec_generated_code(raw_code: str, df: pd.DataFrame) -> tuple:
+    """Execute model-generated code against df. Returns (result_dict, error_str_or_None,
+    seconds, captured_stdout). Never raises.
+    """
+    import contextlib, time
+    buf = io.StringIO()
+    local_vars = {"df": df.copy(), "pd": pd, "json": json}
+    try:
+        import numpy as np
+        local_vars["np"] = np
+    except ImportError:
+        pass
+    try:
+        import scipy.stats  # optional: enables statistical tests
+        local_vars["scipy"] = scipy
+    except ImportError:
+        pass
+    import warnings as _warnings
+    try:
+        t0 = time.perf_counter()
+        with contextlib.redirect_stdout(buf), _warnings.catch_warnings():
+            # Silence noisy-but-harmless warnings emitted from generated code:
+            #   - "Boolean Series key will be reindexed to match DataFrame index."
+            #     (mask built from one df used to filter another)
+            #   - FutureWarning / DeprecationWarning from pandas API drift
+            _warnings.simplefilter("ignore", UserWarning)
+            _warnings.simplefilter("ignore", FutureWarning)
+            _warnings.simplefilter("ignore", DeprecationWarning)
+            exec(raw_code, local_vars)
+        elapsed = time.perf_counter() - t0
+        output = buf.getvalue().strip()
+        if not output:
+            return None, "Code produced no output", elapsed, buf.getvalue()
+        return json.loads(output), None, elapsed, buf.getvalue()
+    except json.JSONDecodeError as e:
+        return None, f"Invalid JSON: {e}", 0.0, buf.getvalue()
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}", 0.0, buf.getvalue()
+
+
 def run_query(client: Anthropic, df: pd.DataFrame, question: str) -> dict:
-    import time
+    """Answer a question by either reusing cached code or calling Claude.
+
+    Cache flow (invisible to the user):
+      1. Hash (normalized question + prompt signature) -> key.
+      2. If key in cache: execute the stored Python locally. On success, bump
+         hit_count, persist, push to GitHub in background, return result.
+      3. On miss OR cached-code execution error: call the Anthropic API,
+         execute the fresh code, store it under the same key on success.
+
+    The returned dict shape is identical regardless of cache path:
+      _usage, _code, _stdout, _exec_seconds, _exec_error
+    plus a new _from_cache flag for diagnostics (still hidden from UI).
+    """
+    from datetime import datetime, timezone
+    import threading
+
+    signature = _prompt_signature()
+    key = _cache_key(question, signature)
+    cache = _load_cache()
+
+    # ── 1. Try cache first ────────────────────────────────────────────────
+    cached_entry = cache.get(key)
+    if cached_entry and cached_entry.get("prompt_signature") == signature:
+        result, exec_error, exec_seconds, stdout = _exec_generated_code(
+            cached_entry["code"], df,
+        )
+        if exec_error is None and result is not None:
+            # Hit. Update bookkeeping, persist, push in background.
+            cached_entry["hit_count"] = int(cached_entry.get("hit_count", 0)) + 1
+            cached_entry["last_used"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            cache[key] = cached_entry
+            _save_cache_local(cache)
+            threading.Thread(
+                target=_github_cache_push, args=(dict(cache),), daemon=True,
+            ).start()
+            result["_usage"] = {
+                "input_tokens": 0, "output_tokens": 0,
+                "cache_creation": 0, "cache_read": 0,
+            }
+            result["_code"] = cached_entry["code"]
+            result["_stdout"] = stdout
+            result["_exec_seconds"] = exec_seconds
+            result["_exec_error"] = None
+            result["_from_cache"] = True
+            return result
+        # Cached code failed — drop it and fall through to API.
+        cache.pop(key, None)
+
+    # ── 2. Cache miss (or self-heal): call the API ────────────────────────
     complete = df[df["status"] == "Complete"] if "status" in df.columns else df
     system = SYSTEM_PROMPT_TEMPLATE.format(
         total=len(df), complete=len(complete), schema=SCHEMA_DESCRIPTION
@@ -514,28 +766,29 @@ def run_query(client: Anthropic, df: pd.DataFrame, question: str) -> dict:
     usage = response.usage
     raw = re.sub(r"^```[\w]*\n?","",response.content[0].text.strip()).rstrip("`").strip()
 
-    buf = io.StringIO()
-    import contextlib
-    local_vars = {"df": df.copy(), "pd": pd, "json": json}
-    exec_error = None
-    exec_seconds = 0.0
-    try:
-        import numpy as np
-        local_vars["np"] = np
-        t0 = time.perf_counter()
-        with contextlib.redirect_stdout(buf):
-            exec(raw, local_vars)
-        exec_seconds = time.perf_counter() - t0
-        output = buf.getvalue().strip()
-        if not output:
-            raise ValueError("Model returned code that produced no output")
-        result = json.loads(output)
-    except json.JSONDecodeError as e:
-        exec_error = f"Invalid JSON: {e}"
-        result = {"answer": f"Analysis returned invalid JSON. Raw output: {buf.getvalue().strip()[:500]}"}
-    except Exception as e:
-        exec_error = f"{type(e).__name__}: {e}"
-        result = {"answer": f"Error executing analysis: {e}", "detail": raw[:500]}
+    result, exec_error, exec_seconds, stdout = _exec_generated_code(raw, df)
+    if result is None:
+        # Build an error result that matches the historical shape
+        if exec_error and exec_error.startswith("Invalid JSON"):
+            result = {"answer": f"Analysis returned invalid JSON. Raw output: {stdout.strip()[:500]}"}
+        else:
+            result = {"answer": f"Error executing analysis: {exec_error}", "detail": raw[:500]}
+
+    # ── 3. Save to cache on clean success ─────────────────────────────────
+    if exec_error is None:
+        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        cache[key] = {
+            "code": raw,
+            "first_question": question,
+            "first_seen": now_iso,
+            "last_used": now_iso,
+            "hit_count": 1,
+            "prompt_signature": signature,
+        }
+        _save_cache_local(cache)
+        threading.Thread(
+            target=_github_cache_push, args=(dict(cache),), daemon=True,
+        ).start()
 
     result["_usage"] = {
         "input_tokens":  usage.input_tokens,
@@ -544,9 +797,10 @@ def run_query(client: Anthropic, df: pd.DataFrame, question: str) -> dict:
         "cache_read":     getattr(usage,"cache_read_input_tokens",0),
     }
     result["_code"] = raw
-    result["_stdout"] = buf.getvalue()
+    result["_stdout"] = stdout
     result["_exec_seconds"] = exec_seconds
     result["_exec_error"] = exec_error
+    result["_from_cache"] = False
     return result
 
 
