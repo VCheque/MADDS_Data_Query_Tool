@@ -1,8 +1,12 @@
 streamlit>=1.35.0
 pandas
+numpy
 openpyxl
 anthropic
 python-dotenv
 plotly>=5.20,<6.0
 kaleido==0.2.1
 Pillow
+scipy
+statsmodels
+scikit-learn
