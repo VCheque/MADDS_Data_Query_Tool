@@ -209,7 +209,7 @@ st.markdown(f"""
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 RELEVANT_COLS = [
-    "acquired_date","groupid","tenantid","suspected",
+    "id","acquired_date","groupid","tenantid","suspected",
     "confirmed_lab_substances","confirmed_lab_components","preliminary_ftir_substances",
     "TownofOriginCleaned","CountyofOriginCleaned","StateofOriginCleaned",
     "PrimaryIllicit","AllIllicits","ActiveCuts","SuspectedCleaned",
@@ -217,6 +217,10 @@ RELEVANT_COLS = [
 ]
 
 SCHEMA_DESCRIPTION = """
+- id: unique sample identifier. The same sample may appear on multiple rows due to processing
+  history; ALWAYS use df['id'].nunique() (NOT len(df)) when answering "how many samples", "count
+  of distinct/unique samples", or any sample-level count. Use len(df) only when the user
+  explicitly asks for "rows" or "records".
 - acquired_date: datetime the sample was acquired.
 - groupid: collection group/site identifier.
 - tenantid: tenant/organisation identifier.
@@ -266,6 +270,11 @@ COLUMN DEFINITIONS:
 {schema}
 
 ANALYSIS RULES:
+- DISTINCT SAMPLE COUNTS: when computing "how many samples", "count of unique/distinct samples",
+  "number of samples", or any sample-level total, ALWAYS use df['id'].nunique() — never len(df).
+  The same physical sample can occupy multiple rows. Apply the same rule inside groupby:
+  use .agg({{'id': 'nunique'}}) or .groupby(...).id.nunique() instead of .size() / .count().
+  Use len(df) only when the user explicitly asks for "rows" or "records".
 - ALWAYS filter to df[df['status'] == 'Complete'] unless the question explicitly asks otherwise. The
   "Complete" subset is the only slice with fully coded lab columns; everything else is in-progress.
 - acquired_date is a pandas datetime64 column. Use pd.to_datetime(..., errors='coerce') if you have any
@@ -1178,20 +1187,46 @@ c1.metric("Total rows",     f"{len(df):,}")
 c2.metric("Complete rows",  f"{complete_count:,}")
 c3.metric("Columns loaded", f"{len(df.columns)}")
 
-# Diagnostics: which expected columns made it through, which didn't, and which extras exist
-loaded_set   = set(df.columns)
-expected_set = set(RELEVANT_COLS)
-missing_cols = [c for c in RELEVANT_COLS if c not in loaded_set]
-with st.expander("Columns loaded from your file"):
-    if missing_cols:
+# Diagnostics: read the RAW Excel header (not the post-filter df) so we can show exactly
+# what's in the file and pinpoint near-misses (case, whitespace, typos).
+import difflib
+try:
+    raw_columns = pd.read_excel(
+        io.BytesIO(st.session_state["file_bytes"]), engine="openpyxl", nrows=0
+    ).columns.tolist()
+except Exception:
+    raw_columns = list(df.columns)
+
+raw_columns_str = [str(c) for c in raw_columns]
+loaded_set = set(df.columns)
+exact_missing = [c for c in RELEVANT_COLS if c not in loaded_set]
+
+# For each missing expected column, look for close matches in the raw file headers
+near_misses = {}
+for expected in exact_missing:
+    candidates = difflib.get_close_matches(expected, raw_columns_str, n=2, cutoff=0.7)
+    # Also catch case-insensitive equivalents that the strict check missed
+    case_only = [c for c in raw_columns_str if c.lower().strip() == expected.lower().strip()]
+    hits = list(dict.fromkeys(case_only + candidates))  # dedupe, keep order
+    if hits:
+        near_misses[expected] = hits
+
+with st.expander("Columns loaded from the VizDat file"):
+    if exact_missing:
         st.warning(
             "These expected columns are **missing** from your Excel file: "
-            + ", ".join(f"`{c}`" for c in missing_cols)
-            + ". Check the header spelling (case-sensitive)."
+            + ", ".join(f"`{c}`" for c in exact_missing)
         )
+        if near_misses:
+            st.markdown("**Possible matches in your file** (rename your Excel header to fix):")
+            for expected, hits in near_misses.items():
+                hits_fmt = ", ".join(f"`{h}`" for h in hits)
+                st.markdown(f"- expected `{expected}` — found in file: {hits_fmt}")
+            st.caption("Headers are matched case-sensitively and whitespace-sensitively.")
     else:
         st.success("All expected columns are present.")
-    st.caption("Loaded columns:")
+
+    st.caption(f"Columns the app kept after filtering ({len(df.columns)}):")
     st.code(", ".join(df.columns), language="text")
 
 st.markdown("---")
