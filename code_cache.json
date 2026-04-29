@@ -3,8 +3,8 @@
     "code": "import json\nimport pandas as pd\n\n# Filter to Complete status and year 2024\ndf_complete = df[df['status'] == 'Complete']\ndf_2024 = df_complete[df_complete['acquired_date'].dt.year == 2024]\n\n# Split ActiveCuts on comma, explode, strip whitespace\ncuts = (df_2024['ActiveCuts']\n        .fillna('')\n        .str.split(',')\n        .explode()\n        .str.strip())\n\n# Remove empty strings and \"None Detected\"\ncuts = cuts[\n    (cuts != '') & \n    (cuts.str.lower() != 'none detected')\n]\n\n# Get top 10 and prepare chart\ntop_10 = cuts.value_counts().head(10)\n\nresult = {\n    \"answer\": f\"The top 10 active cuts detected in 2024 were: {', '.join([f'{cut} ({count})' for cut, count in top_10.items()])}. This analysis covers {len(df_2024)} samples with Complete status acquired in 2024.\",\n    \"metrics\": [\n        {\"label\": \"Total Samples (2024)\", \"value\": len(df_2024)},\n        {\"label\": \"Unique Cuts Detected\", \"value\": len(cuts.unique())},\n        {\"label\": \"Most Common Cut\", \"value\": f\"{top_10.index[0]} ({int(top_10.iloc[0])} samples)\"}\n    ],\n    \"chart\": {\n        \"type\": \"bar\",\n        \"labels\": [str(cut) for cut in top_10.index],\n        \"values\": [int(count) for count in top_10.values],\n        \"label\": \"Detection Count\",\n        \"colors\": False\n    },\n    \"detail\": \"Filtered to Complete samples from 2024. ActiveCuts split on comma and stripped. 'None Detected' and empty strings excluded. Each cut counted once per sample.\"\n}\n\nprint(json.dumps(result, default=str))",
     "first_question": "Bar chart of top 10 active cuts in 2024",
     "first_seen": "2026-04-29T13:53:27+00:00",
-    "last_used": "2026-04-29T13:58:00+00:00",
-    "hit_count": 2,
+    "last_used": "2026-04-29T13:59:33+00:00",
+    "hit_count": 3,
     "prompt_signature": "aac0c56b921e"
   },
   "fc4972f2e2ae64af": {
