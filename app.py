@@ -210,7 +210,7 @@ st.markdown(f"""
 # ── Constants ─────────────────────────────────────────────────────────────────
 RELEVANT_COLS = [
     "acquired_date","groupid","tenantid","town","suspected",
-    "confirmed_lab_substances","preliminary_ftir_substances",
+    "confirmed_lab_substances","confirmed_lab_components","preliminary_ftir_substances",
     "TownofOriginCleaned","CountyofOriginCleaned","StateofOriginCleaned",
     "PrimaryIllicit","AllIllicits","ActiveCuts","SuspectedCleaned",
     "DrugClasses","PrimaryDrugClass","status",
@@ -223,6 +223,16 @@ SCHEMA_DESCRIPTION = """
 - town: free-text town name as submitted.
 - suspected: free-text suspected substance(s) as reported by submitter.
 - confirmed_lab_substances: pipe-separated substances confirmed by lab e.g. "Fentanyl|Heroin|Caffeine".
+- confirmed_lab_components: pipe-separated RELATIVE PROPORTION numbers, position-aligned 1:1 with
+  confirmed_lab_substances in the same row. Each number tells you how much of that substance is
+  present RELATIVE TO THE OTHERS in that same sample (typically the smallest detected component is
+  normalized to 1, others scale up). Values can be integers or decimals, e.g. "140|20|1" means the
+  first substance is 140 units to 20 to 1; "85.00|2.50|1.00" means 85 to 2.5 to 1. The string
+  "Unknown" appears for components whose proportion couldn't be measured (e.g. "Unknown|1"). Empty
+  values (NaN) indicate the lab data is missing entirely. CRITICAL: these are RATIOS, not
+  percentages summing to 100, and not absolute concentrations (mg, %). Only meaningful for
+  within-sample comparisons (e.g. "is xylazine larger than fentanyl in this sample?") or for
+  averaging ratios across samples — never treat them as standalone quantities.
 - preliminary_ftir_substances: pipe-separated FTIR preliminary substances.
 - TownofOriginCleaned: cleaned town name.
 - CountyofOriginCleaned: cleaned county name.
@@ -266,6 +276,30 @@ ANALYSIS RULES:
   with str.strip(). To count occurrences across rows, use .explode() after splitting into a list.
 - confirmed_lab_substances and preliminary_ftir_substances are PIPE-separated (|), not comma-separated.
   Split on '|' and strip whitespace.
+- LAB COMPONENT RATIOS: confirmed_lab_components pairs index-by-index with confirmed_lab_substances
+  in each row. Use this column for any "ratio", "relative amount", "how much of X", "dominant",
+  or "concentration" style question. Always parse the two columns together and zip them. Example
+  helper that you should adapt:
+      def lab_ratio_for(row, target_substance):
+          subs = str(row.get('confirmed_lab_substances') or '').split('|')
+          comps = str(row.get('confirmed_lab_components') or '').split('|')
+          if len(subs) != len(comps):
+              return None
+          for s, c in zip(subs, comps):
+              if s.strip().lower() == target_substance.lower():
+                  try:
+                      return float(c.strip())
+                  except ValueError:
+                      return None  # 'Unknown' or other non-numeric placeholder
+          return None
+  When computing across-sample statistics on these ratios:
+    1. drop rows where the value is None (substance not present, or non-numeric component)
+    2. report sample size N alongside any mean/median (small N = noisy)
+    3. for ratios between two substances in the same row, return the per-row ratio first then
+       average — never average each substance's ratio separately and divide.
+  These are RELATIVE proportions, not percentages or mg amounts. Phrases that ask "what percent of
+  the sample is X" cannot be answered from this column alone; clarify in the answer that the
+  reported number is a relative ratio scaled so the smallest component = 1.
 - All string comparisons must be case-insensitive. Prefer .str.lower() before equality checks, or
   .str.contains(..., case=False, na=False) for substring matching. Always pass na=False so NaN rows
   don't silently match.
@@ -383,6 +417,28 @@ Question: "Run a chi-square test of independence between PrimaryDrugClass and St
 Approach: filter Complete, drop NaNs in both columns, build pd.crosstab, pass to
 scipy.stats.chi2_contingency. Return metrics for {{chi2, dof, p-value}} and an answer that
 interprets the p-value: "p < 0.05 suggests drug class composition differs significantly across states."
+
+Question: "Average ratio of fentanyl to xylazine in samples that contain both"
+Approach: filter Complete. For each row, parse confirmed_lab_substances and confirmed_lab_components
+together and find the numeric component for each of the two target substances; compute the per-row
+ratio fent/xyl ONLY when both are present and both are numeric; then aggregate.
+  rows = []
+  for _, row in df_complete.iterrows():
+      subs = str(row.get('confirmed_lab_substances') or '').split('|')
+      comps = str(row.get('confirmed_lab_components') or '').split('|')
+      if len(subs) != len(comps):
+          continue
+      lookup = {{}}
+      for s, c in zip(subs, comps):
+          try:
+              lookup[s.strip().lower()] = float(c.strip())
+          except ValueError:
+              pass  # 'Unknown' / non-numeric
+      if 'fentanyl' in lookup and 'xylazine' in lookup:
+          rows.append(lookup['fentanyl'] / lookup['xylazine'])
+  Return metrics for {{N samples with both, Mean ratio, Median ratio}} plus an answer that
+  emphasizes these are within-sample relative proportions, not absolute amounts. Use a
+  histogram-style bar chart of binned ratio values if a visual makes sense.
 
 IMPORTANT EXECUTION RULES:
 - Write Python code using the DataFrame `df`, then end with: print(json.dumps(result, default=str))
