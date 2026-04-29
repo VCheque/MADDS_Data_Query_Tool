@@ -209,7 +209,7 @@ st.markdown(f"""
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 RELEVANT_COLS = [
-    "acquired_date","groupid","tenantid","town","suspected",
+    "acquired_date","groupid","tenantid","suspected",
     "confirmed_lab_substances","confirmed_lab_components","preliminary_ftir_substances",
     "TownofOriginCleaned","CountyofOriginCleaned","StateofOriginCleaned",
     "PrimaryIllicit","AllIllicits","ActiveCuts","SuspectedCleaned",
@@ -220,7 +220,6 @@ SCHEMA_DESCRIPTION = """
 - acquired_date: datetime the sample was acquired.
 - groupid: collection group/site identifier.
 - tenantid: tenant/organisation identifier.
-- town: free-text town name as submitted.
 - suspected: free-text suspected substance(s) as reported by submitter.
 - confirmed_lab_substances: pipe-separated substances confirmed by lab e.g. "Fentanyl|Heroin|Caffeine".
 - confirmed_lab_components: pipe-separated RELATIVE PROPORTION numbers, position-aligned 1:1 with
@@ -234,7 +233,7 @@ SCHEMA_DESCRIPTION = """
   within-sample comparisons (e.g. "is xylazine larger than fentanyl in this sample?") or for
   averaging ratios across samples — never treat them as standalone quantities.
 - preliminary_ftir_substances: pipe-separated FTIR preliminary substances.
-- TownofOriginCleaned: cleaned town name.
+- TownofOriginCleaned: cleaned town name where the sample was originated/tested.
 - CountyofOriginCleaned: cleaned county name.
 - StateofOriginCleaned: full US state name e.g. "Massachusetts", "Rhode Island".
 - PrimaryIllicit: single primary illicit substance e.g. "Fentanyl", "Cocaine", "None Detected".
@@ -1178,6 +1177,22 @@ c1, c2, c3 = st.columns(3)
 c1.metric("Total rows",     f"{len(df):,}")
 c2.metric("Complete rows",  f"{complete_count:,}")
 c3.metric("Columns loaded", f"{len(df.columns)}")
+
+# Diagnostics: which expected columns made it through, which didn't, and which extras exist
+loaded_set   = set(df.columns)
+expected_set = set(RELEVANT_COLS)
+missing_cols = [c for c in RELEVANT_COLS if c not in loaded_set]
+with st.expander("Columns loaded from your file"):
+    if missing_cols:
+        st.warning(
+            "These expected columns are **missing** from your Excel file: "
+            + ", ".join(f"`{c}`" for c in missing_cols)
+            + ". Check the header spelling (case-sensitive)."
+        )
+    else:
+        st.success("All expected columns are present.")
+    st.caption("Loaded columns:")
+    st.code(", ".join(df.columns), language="text")
 
 st.markdown("---")
 
