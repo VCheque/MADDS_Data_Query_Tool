@@ -271,9 +271,19 @@ COLUMN DEFINITIONS:
 
 ANALYSIS RULES:
 - DISTINCT SAMPLE COUNTS: when computing "how many samples", "count of unique/distinct samples",
-  "number of samples", or any sample-level total, ALWAYS use df['id'].nunique() — never len(df).
-  The same physical sample can occupy multiple rows. Apply the same rule inside groupby:
-  use .agg({{'id': 'nunique'}}) or .groupby(...).id.nunique() instead of .size() / .count().
+  "number of samples", or any sample-level total, prefer df['id'].nunique() — never len(df) by
+  default. The same physical sample can occupy multiple rows. Apply the same rule inside groupby:
+  use .agg({{'id': 'nunique'}}) or .groupby(...)['id'].nunique() instead of .size() / .count().
+  DEFENSIVE: at the top of your code, compute a count helper that handles the case where 'id'
+  isn't in the DataFrame (older exports may lack it):
+      count_col = 'id' if 'id' in df.columns else None
+      def n_samples(frame):
+          return frame['id'].nunique() if count_col else len(frame)
+  Then use n_samples(df_complete), n_samples(filtered_subset), etc. Inside groupby, branch:
+      if count_col:
+          out = grouped.agg(samples=('id', 'nunique'))
+      else:
+          out = grouped.size().rename('samples')
   Use len(df) only when the user explicitly asks for "rows" or "records".
 - ALWAYS filter to df[df['status'] == 'Complete'] unless the question explicitly asks otherwise. The
   "Complete" subset is the only slice with fully coded lab columns; everything else is in-progress.
@@ -471,9 +481,17 @@ def get_client():
 
 
 @st.cache_data
-def load_data(file_bytes: bytes) -> pd.DataFrame:
+def load_data(file_bytes: bytes, columns: tuple) -> pd.DataFrame:
+    """Parse the Excel file and keep only the relevant columns.
+
+    `columns` is passed explicitly (instead of read from the global RELEVANT_COLS)
+    so any change to the relevant-columns list invalidates the cache automatically.
+    Streamlit's @st.cache_data hashes ALL function arguments — globals captured
+    from outer scope are NOT part of the cache key, which would silently return
+    stale results when the column list changes.
+    """
     df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
-    available = [c for c in RELEVANT_COLS if c in df.columns]
+    available = [c for c in columns if c in df.columns]
     df = df[available].copy()
     if "acquired_date" in df.columns:
         df["acquired_date"] = pd.to_datetime(df["acquired_date"], errors="coerce")
@@ -1179,7 +1197,7 @@ if uploaded is not None:
         st.session_state["file_bytes"] = uploaded.read()
         st.session_state["file_name"] = uploaded.name
 
-df = load_data(st.session_state["file_bytes"])
+df = load_data(st.session_state["file_bytes"], tuple(RELEVANT_COLS))
 complete_count = int((df["status"] == "Complete").sum()) if "status" in df.columns else len(df)
 
 c1, c2, c3 = st.columns(3)
