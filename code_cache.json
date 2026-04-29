@@ -14,5 +14,13 @@
     "last_used": "2026-04-29T13:57:49+00:00",
     "hit_count": 1,
     "prompt_signature": "aac0c56b921e"
+  },
+  "561a500a362986d8": {
+    "code": "import json\nimport pandas as pd\n\n# Filter to Complete status\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Filter to Massachusetts\ndf_ma = df_complete[df_complete['StateofOriginCleaned'].str.lower() == 'massachusetts']\n\n# Filter to 2025\ndf_2025 = df_ma[df_ma['acquired_date'].dt.year == 2025]\n\n# Filter to samples containing Fentanyl in AllIllicits\ndf_fent = df_2025[df_2025['AllIllicits'].fillna('').str.contains('fentanyl', case=False, na=False)]\n\n# Group by month and count\nmonthly_counts = df_fent.groupby(df_fent['acquired_date'].dt.to_period('M')).size()\n\n# Convert period index to timestamp for better sorting/display\nmonthly_counts.index = monthly_counts.index.to_timestamp()\n\n# Format labels as \"Jan 2025\", \"Feb 2025\", etc.\nlabels = [dt.strftime('%b %Y') for dt in monthly_counts.index]\nvalues = [int(v) for v in monthly_counts.values]\n\n# Summary stats\ntotal_fent_samples = len(df_fent)\nmonths_with_data = len(monthly_counts)\npeak_month = monthly_counts.idxmax() if len(monthly_counts) > 0 else None\npeak_count = int(monthly_counts.max()) if len(monthly_counts) > 0 else 0\n\nresult = {\n    \"answer\": f\"Massachusetts had {total_fent_samples} Fentanyl-positive samples across {months_with_data} months in 2025. Peak month was {peak_month.strftime('%B %Y') if peak_month else 'N/A'} with {peak_count} samples.\",\n    \"metrics\": [\n        {\"label\": \"Total Fentanyl Samples (MA, 2025)\", \"value\": total_fent_samples},\n        {\"label\": \"Months with Data\", \"value\": months_with_data},\n        {\"label\": \"Peak Monthly Count\", \"value\": peak_count}\n    ],\n    \"chart\": {\n        \"type\": \"line\",\n        \"labels\": labels,\n        \"values\": values,\n        \"label\": \"Fentanyl Sample Count\"\n    },\n    \"detail\": \"Filtered to Complete status, Massachusetts state, 2025 calendar year, samples with 'Fentanyl' detected in AllIllicits column (case-insensitive).\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Line chart of monthly Fentanyl sample count in 2025 in Massachusetts",
+    "first_seen": "2026-04-29T13:58:44+00:00",
+    "last_used": "2026-04-29T13:58:44+00:00",
+    "hit_count": 1,
+    "prompt_signature": "aac0c56b921e"
   }
 }
