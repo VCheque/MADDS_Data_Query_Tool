@@ -582,5 +582,13 @@
     "last_used": "2026-05-01T17:21:33+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "d09cd809768ae345": {
+    "code": "import pandas as pd\nimport json\n\n# Filter to Complete status\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Ensure acquired_date is datetime\ndf_complete['acquired_date'] = pd.to_datetime(df_complete['acquired_date'], errors='coerce')\n\n# Filter to 2024 only\ndf_2024 = df_complete[df_complete['acquired_date'].dt.year == 2024]\n\n# Get all months that have data in 2024\nmonths_with_data = df_2024['acquired_date'].dt.month.unique()\nmonths_with_data = sorted(months_with_data)\n\n# All 12 months\nall_months = set(range(1, 13))\nmonths_without_data = sorted(all_months - set(months_with_data))\n\n# Map month numbers to names\nmonth_names = {\n    1: 'January', 2: 'February', 3: 'March', 4: 'April',\n    5: 'May', 6: 'June', 7: 'July', 8: 'August',\n    9: 'September', 10: 'October', 11: 'November', 12: 'December'\n}\n\nmonths_without_data_names = [month_names[m] for m in months_without_data]\n\nif len(months_without_data) == 0:\n    answer_text = \"All 12 months in 2024 had at least one sample submitted.\"\nelse:\n    answer_text = f\"{len(months_without_data)} months in 2024 had no samples submitted: {', '.join(months_without_data_names)}.\"\n\nresult = {\n    \"answer\": answer_text,\n    \"metrics\": [\n        {\"label\": \"Months with no submissions\", \"value\": len(months_without_data)},\n        {\"label\": \"Months with submissions\", \"value\": len(months_with_data)},\n        {\"label\": \"Total samples in 2024\", \"value\": int(df_2024['id'].nunique())}\n    ],\n    \"detail\": \"Filtered to Complete status samples acquired in 2024; identified calendar months (1-12) with zero distinct sample submissions.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Which months in 2024 had no samples submitted?",
+    "first_seen": "2026-05-01T17:22:15+00:00",
+    "last_used": "2026-05-01T17:22:15+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
