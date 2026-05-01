@@ -302,5 +302,13 @@
     "last_used": "2026-05-01T16:49:56+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "80ff5f200dd7be55": {
+    "code": "import json\nimport pandas as pd\nimport numpy as np\n\n# Filter to Complete status, Massachusetts, and 2025\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Ensure acquired_date is datetime\ndf_complete['acquired_date'] = pd.to_datetime(df_complete['acquired_date'], errors='coerce')\n\n# Filter for Massachusetts and year 2025\ndf_ma = df_complete[\n    (df_complete['StateofOriginCleaned'] == 'Massachusetts') &\n    (df_complete['acquired_date'].dt.year == 2025)\n].copy()\n\n# Filter for samples that contain both fentanyl AND xylazine in AllIllicits\ndf_both = df_ma[\n    df_ma['AllIllicits'].fillna('').str.contains('fentanyl', case=False, na=False) &\n    df_ma['AllIllicits'].fillna('').str.contains('xylazine', case=False, na=False)\n].copy()\n\n# Count by town\ntown_counts = df_both['TownofOriginCleaned'].value_counts()\n\nif len(town_counts) == 0:\n    result = {\n        \"answer\": \"No samples in Massachusetts in 2025 contained both fentanyl and xylazine.\",\n        \"detail\": \"Filtered to Complete status, StateofOriginCleaned=='Massachusetts', year 2025, AllIllicits containing both 'fentanyl' and 'xylazine'.\"\n    }\nelse:\n    top_town = town_counts.index[0]\n    top_count = int(town_counts.iloc[0])\n    \n    result = {\n        \"answer\": f\"{top_town}, Massachusetts had the highest count of fentanyl cut with xylazine in 2025, with {top_count} sample(s).\",\n        \"metrics\": [\n            {\"label\": \"Top Town\", \"value\": top_town},\n            {\"label\": \"Sample Count\", \"value\": top_count},\n            {\"label\": \"Total MA Samples (Fent+Xyl)\", \"value\": int(len(df_both))}\n        ],\n        \"list\": {\n            \"items\": [\n                {\"label\": town, \"value\": str(int(count))}\n                for town, count in town_counts.head(10).items()\n            ]\n        },\n        \"detail\": \"Filtered to Complete status, Massachusetts samples from 2025 where AllIllicits contains both 'fentanyl' and 'xylazine'.\"\n    }\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Which Massachusetts town had the highest count of fentanyl cut with xylazine in 2025?",
+    "first_seen": "2026-05-01T16:50:13+00:00",
+    "last_used": "2026-05-01T16:50:13+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
