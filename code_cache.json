@@ -630,5 +630,13 @@
     "last_used": "2026-05-01T17:25:29+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "a3a1c9fd2c66bd35": {
+    "code": "import json\nimport pandas as pd\n\n# Setup\ndf_complete = df[df['status'] == 'Complete'].copy()\ndf_complete['acquired_date'] = pd.to_datetime(df_complete['acquired_date'], errors='coerce')\n\n# Filter to 2024-2025\ndf_complete = df_complete[\n    (df_complete['acquired_date'].dt.year >= 2024) & \n    (df_complete['acquired_date'].dt.year <= 2025)\n].copy()\n\n# Identify weekends (Saturday=5, Sunday=6 in dayofweek)\ndf_complete['dayofweek'] = df_complete['acquired_date'].dt.dayofweek\ndf_complete['day_name'] = df_complete['acquired_date'].dt.day_name()\nis_weekend = df_complete['dayofweek'].isin([5, 6])\n\n# Count samples per day (grouping by date + day name)\ndf_complete['date'] = df_complete['acquired_date'].dt.date\nweekend_data = df_complete[is_weekend].groupby(['date', 'day_name'])['id'].nunique().reset_index()\nweekend_data.columns = ['Date', 'Day', 'Sample Count']\nweekend_data = weekend_data.sort_values('Date', ascending=False)\n\n# Summary stats\ntotal_weekend_samples = df_complete[is_weekend]['id'].nunique()\ntotal_samples_2024_2025 = df_complete['id'].nunique()\npct = (total_weekend_samples / total_samples_2024_2025 * 100) if total_samples_2024_2025 > 0 else 0\n\n# Prepare table output (limit to 50 rows)\ntable_rows = []\nfor _, row in weekend_data.head(50).iterrows():\n    table_rows.append([str(row['Date']), row['Day'], int(row['Sample Count'])])\n\nresult = {\n    \"answer\": f\"In 2024-2025, {total_weekend_samples:,} samples ({pct:.1f}%) were submitted on weekends (Saturday or Sunday) out of {total_samples_2024_2025:,} total Complete samples.\",\n    \"metrics\": [\n        {\"label\": \"Weekend Samples\", \"value\": total_weekend_samples},\n        {\"label\": \"Total 2024-2025 Samples\", \"value\": total_samples_2024_2025},\n        {\"label\": \"Weekend %\", \"value\": f\"{pct:.1f}%\"}\n    ],\n    \"table\": {\n        \"headers\": [\"Date\", \"Day\", \"Sample Count\"],\n        \"rows\": table_rows\n    },\n    \"detail\": \"Weekend defined as Saturday and Sunday. Counted unique sample IDs (not rows). Filtered to 2024-2025 data with Complete status only.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Create a table of the number of samples submitted on a weekend in 2024-2025.",
+    "first_seen": "2026-05-01T17:26:09+00:00",
+    "last_used": "2026-05-01T17:26:09+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
