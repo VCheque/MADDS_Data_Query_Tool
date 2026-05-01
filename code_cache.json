@@ -358,5 +358,13 @@
     "last_used": "2026-05-01T16:56:02+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "759e588d5ff0274d": {
+    "code": "import json\nimport pandas as pd\nimport numpy as np\n\n# Defensive: handle missing 'id' column\ncount_col = 'id' if 'id' in df.columns else None\n\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\n# Filter to Complete status\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Ensure acquired_date is datetime\ndf_complete['acquired_date'] = pd.to_datetime(df_complete['acquired_date'], errors='coerce')\n\n# Filter to year 2026 in Massachusetts\ndf_filtered = df_complete[\n    (df_complete['acquired_date'].dt.year == 2026) &\n    (df_complete['StateofOriginCleaned'].fillna('').str.lower() == 'massachusetts')\n].copy()\n\n# Filter to fentanyl samples (check AllIllicits for fentanyl)\ndf_fent = df_filtered[\n    df_filtered['AllIllicits'].fillna('').str.contains('fentanyl', case=False, na=False)\n].copy()\n\ntotal_fent_samples = n_samples(df_fent)\n\nif total_fent_samples == 0:\n    result = {\n        \"answer\": \"No fentanyl samples were collected in Massachusetts in 2026.\",\n        \"metrics\": [\n            {\"label\": \"Fentanyl Samples (MA, 2026)\", \"value\": \"0\"}\n        ],\n        \"detail\": \"Filtered to Complete status, Massachusetts, year 2026, AllIllicits containing 'fentanyl'.\"\n    }\nelse:\n    # Among fentanyl samples, count those with xylazine as a cut\n    df_fent_xyl = df_fent[\n        df_fent['ActiveCuts'].fillna('').str.contains('xylazine', case=False, na=False)\n    ].copy()\n    \n    xyl_cut_count = n_samples(df_fent_xyl)\n    pct = (xyl_cut_count / total_fent_samples) * 100 if total_fent_samples > 0 else 0\n    \n    result = {\n        \"answer\": f\"{pct:.1f}% of fentanyl samples collected in Massachusetts in 2026 contained xylazine as an active cut ({xyl_cut_count} of {total_fent_samples} samples).\",\n        \"metrics\": [\n            {\"label\": \"Fentanyl Samples (MA, 2026)\", \"value\": str(total_fent_samples)},\n            {\"label\": \"With Xylazine Cut\", \"value\": str(xyl_cut_count)},\n            {\"label\": \"Percentage\", \"value\": f\"{pct:.1f}%\"}\n        ],\n        \"detail\": \"Filtered to Complete status, Massachusetts, year 2026. Fentanyl identified via AllIllicits; xylazine identified via ActiveCuts column. Counts distinct samples (by id).\"\n    }\n\nprint(json.dumps(result, default=str))",
+    "first_question": "What percent of fentanyl samples collected in Massachusetts in 2026 have been cut with xylazine?",
+    "first_seen": "2026-05-01T16:56:43+00:00",
+    "last_used": "2026-05-01T16:56:43+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
