@@ -110,5 +110,13 @@
     "last_used": "2026-05-01T16:00:55+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "160c412f8e11910c": {
+    "code": "import json\nimport pandas as pd\n\n# Filter to Complete status\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Count unique samples by state\nstate_counts = df_complete.groupby('StateofOriginCleaned')['id'].nunique().sort_values(ascending=False)\n\n# Prepare chart data\nlabels = state_counts.index.tolist()\nvalues = [int(v) for v in state_counts.values]\n\nresult = {\n    \"answer\": f\"Sample counts by state across {df_complete['id'].nunique():,} complete samples. \"\n              f\"States range from {min(values)} to {max(values):,} samples, with {len(labels)} states represented. \"\n              f\"Data labels appear on each bar point.\",\n    \"chart\": {\n        \"type\": \"bar\",\n        \"labels\": labels,\n        \"values\": values,\n        \"label\": \"Sample Count\",\n        \"colors\": False,\n        \"data_labels\": True\n    },\n    \"detail\": \"Counts unique sample IDs per state. Filtered to Complete status only (fully coded lab columns).\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Graph of sample counts by state, with data labels on each point",
+    "first_seen": "2026-05-01T16:08:30+00:00",
+    "last_used": "2026-05-01T16:08:30+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
