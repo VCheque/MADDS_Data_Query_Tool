@@ -342,5 +342,13 @@
     "last_used": "2026-05-01T16:54:24+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "27ea82a3e6a635d1": {
+    "code": "import json\nimport pandas as pd\n\n# Filter to Complete status and 2025\ndf_complete = df[df['status'] == 'Complete'].copy()\ndf_2025 = df_complete[df_complete['acquired_date'].dt.year == 2025].copy()\n\n# Filter to samples containing fentanyl in AllIllicits\ndf_fent = df_2025[df_2025['AllIllicits'].fillna('').str.contains('fentanyl', case=False, na=False)].copy()\n\n# Count distinct samples per state\ncount_col = 'id' if 'id' in df_fent.columns else None\nif count_col:\n    state_counts = df_fent.groupby('StateofOriginCleaned')['id'].nunique().sort_values(ascending=False)\nelse:\n    state_counts = df_fent.groupby('StateofOriginCleaned').size().sort_values(ascending=False)\n\n# Remove NaN state if present\nstate_counts = state_counts[state_counts.index.notna()]\n\n# Build pie chart\nlabels = [str(s) for s in state_counts.index.tolist()]\nvalues = [int(v) for v in state_counts.values.tolist()]\ntotal_samples = sum(values)\n\nresult = {\n    \"answer\": f\"In 2025, {total_samples} fentanyl-positive samples were detected across {len(state_counts)} states. The top states by volume are {labels[0]} ({values[0]} samples), {labels[1]} ({values[1]} samples), and {labels[2]} ({values[2]} samples).\",\n    \"metrics\": [\n        {\"label\": \"Total Fentanyl Samples (2025)\", \"value\": total_samples},\n        {\"label\": \"States Represented\", \"value\": len(state_counts)},\n        {\"label\": \"Top State\", \"value\": f\"{labels[0]} ({values[0]})\"}\n    ],\n    \"chart\": {\n        \"type\": \"pie\",\n        \"labels\": labels,\n        \"values\": values,\n        \"label\": \"Fentanyl Samples by State\",\n        \"colors\": True\n    },\n    \"detail\": \"Counts distinct samples (by id) with 'fentanyl' in AllIllicits column, filtered to Complete status and 2025 acquisition date.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Pie chart of states with the most instances of fentanyl in 2025",
+    "first_seen": "2026-05-01T16:55:22+00:00",
+    "last_used": "2026-05-01T16:55:22+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
