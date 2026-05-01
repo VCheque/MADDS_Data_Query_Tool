@@ -622,5 +622,13 @@
     "last_used": "2026-05-01T17:24:39+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "cb140189e743d027": {
+    "code": "import pandas as pd\nimport json\n\n# Ensure acquired_date is datetime\ndf['acquired_date'] = pd.to_datetime(df['acquired_date'], errors='coerce')\n\n# Filter to Complete status and year 2024\ndf_complete = df[df['status'] == 'Complete'].copy()\ndf_2024 = df_complete[df_complete['acquired_date'].dt.year == 2024].copy()\n\n# Get day of week: 5=Saturday, 6=Sunday\ndf_2024['day_of_week'] = df_2024['acquired_date'].dt.dayofweek\nweekend_mask = df_2024['day_of_week'].isin([5, 6])\ndf_weekend = df_2024[weekend_mask]\n\n# Count distinct samples\ncount_col = 'id' if 'id' in df.columns else None\n\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\nweekend_count = n_samples(df_weekend)\ntotal_2024_count = n_samples(df_2024)\n\nresult = {\n    \"answer\": f\"{weekend_count:,} samples were submitted on weekends (Saturday or Sunday) in 2024, out of {total_2024_count:,} total Complete samples that year ({round(100 * weekend_count / total_2024_count, 1)}%).\",\n    \"metrics\": [\n        {\"label\": \"Weekend Samples (2024)\", \"value\": weekend_count},\n        {\"label\": \"Total Samples (2024)\", \"value\": total_2024_count},\n        {\"label\": \"Weekend %\", \"value\": f\"{round(100 * weekend_count / total_2024_count, 1)}%\"}\n    ],\n    \"detail\": \"Filtered to Complete status, year 2024, and day-of-week = Saturday (5) or Sunday (6). Weekend count based on distinct sample IDs (id.nunique()).\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "How many samples were submitted on a weekend in 2024?",
+    "first_seen": "2026-05-01T17:25:29+00:00",
+    "last_used": "2026-05-01T17:25:29+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
