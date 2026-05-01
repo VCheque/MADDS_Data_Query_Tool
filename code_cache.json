@@ -518,5 +518,13 @@
     "last_used": "2026-05-01T17:15:52+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "fdbccaae8a35435d": {
+    "code": "import json\nimport pandas as pd\n\n# Defensive count helper\ncount_col = 'id' if 'id' in df.columns else None\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\n# Filter to Complete status\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Filter to New York, stimulant-primary samples\ndf_ny_stim = df_complete[\n    (df_complete['StateofOriginCleaned'] == 'New York') &\n    (df_complete['PrimaryDrugClass'].str.lower() == 'stimulant')\n].copy()\n\ntotal_samples = n_samples(df_ny_stim)\n\n# Count samples containing nitazene in AllIllicits\nnitazene_mask = df_ny_stim['AllIllicits'].fillna('').str.contains('nitazene', case=False, na=False)\nnitazene_samples = n_samples(df_ny_stim[nitazene_mask])\n\n# Calculate percentage\nif total_samples > 0:\n    pct = (nitazene_samples / total_samples) * 100\nelse:\n    pct = 0.0\n\nresult = {\n    \"answer\": f\"{pct:.1f}% of stimulant-primary samples from New York contained nitazene ({nitazene_samples} of {total_samples} samples).\",\n    \"metrics\": [\n        {\"label\": \"NY Stimulant-Primary Samples\", \"value\": total_samples},\n        {\"label\": \"Nitazene Present\", \"value\": nitazene_samples},\n        {\"label\": \"Nitazene Rate\", \"value\": f\"{pct:.1f}%\"}\n    ],\n    \"detail\": \"Filtered to Complete status, PrimaryDrugClass == 'Stimulant', StateofOriginCleaned == 'New York'. Nitazene detected via AllIllicits substring match (case-insensitive).\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Percent of nitazene appearances in stimulant-primary samples from New York",
+    "first_seen": "2026-05-01T17:16:07+00:00",
+    "last_used": "2026-05-01T17:16:07+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
