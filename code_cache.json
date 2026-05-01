@@ -334,5 +334,13 @@
     "last_used": "2026-05-01T16:53:45+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "2e098a9c0e0b82c7": {
+    "code": "import json\nimport pandas as pd\n\n# Filter to Complete status only\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Count unique samples per state\ncount_col = 'id' if 'id' in df_complete.columns else None\n\nif count_col:\n    state_counts = df_complete.groupby('StateofOriginCleaned')['id'].nunique().reset_index()\n    state_counts.columns = ['State', 'Samples']\nelse:\n    state_counts = df_complete.groupby('StateofOriginCleaned').size().reset_index(name='Samples')\n\n# Sort alphabetically by state\nstate_counts = state_counts.sort_values('State').reset_index(drop=True)\n\n# Remove any NaN states\nstate_counts = state_counts.dropna(subset=['State'])\n\nlabels = state_counts['State'].tolist()\nvalues = state_counts['Samples'].tolist()\n\n# Convert to native Python ints for JSON serialization\nvalues = [int(v) for v in values]\n\ntotal_samples = sum(values)\nnum_states = len(labels)\n\nresult = {\n    \"answer\": f\"Sample counts across {num_states} states. Total of {total_samples:,} samples with Complete status. States are sorted alphabetically with vertical X-axis labels for readability.\",\n    \"metrics\": [\n        {\"label\": \"Total Samples\", \"value\": total_samples},\n        {\"label\": \"States Represented\", \"value\": num_states},\n        {\"label\": \"Average Samples per State\", \"value\": round(total_samples / num_states, 1)}\n    ],\n    \"chart\": {\n        \"type\": \"bar\",\n        \"labels\": labels,\n        \"values\": values,\n        \"label\": \"Sample Count by State\",\n        \"colors\": False\n    },\n    \"detail\": \"Counted unique sample IDs per state; filtered to Complete status only. X-axis labels should be rendered vertically.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Create a bar chart of sample counts across all states for all years.  Sort states alphabetically and make the labels on the X-axis vertical.",
+    "first_seen": "2026-05-01T16:54:24+00:00",
+    "last_used": "2026-05-01T16:54:24+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
