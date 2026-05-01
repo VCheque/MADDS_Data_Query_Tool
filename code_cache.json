@@ -598,5 +598,13 @@
     "last_used": "2026-05-01T17:22:59+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "902f738bbff33dd3": {
+    "code": "import json\nimport pandas as pd\n\n# Filter to Complete status only\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Extract all cuts from ActiveCuts column\nall_cuts = []\nfor cuts_str in df_complete['ActiveCuts'].dropna():\n    if isinstance(cuts_str, str):\n        cuts_list = [cut.strip() for cut in cuts_str.split(',')]\n        all_cuts.extend(cuts_list)\n\n# Filter for cuts containing 'analogue' (case-insensitive)\nanalogue_cuts = [cut for cut in all_cuts if 'analogue' in cut.lower()]\n\n# Get unique cuts and their counts\nunique_analogue_cuts = pd.Series(analogue_cuts).value_counts().sort_values(ascending=False)\n\n# Build result\nresult = {\n    \"answer\": f\"Found {len(unique_analogue_cuts)} distinct cuts with 'analogue' in the name across {len(df_complete)} complete samples. The cuts are: {', '.join(unique_analogue_cuts.index.tolist())}.\",\n    \"list\": {\n        \"items\": [\n            {\"label\": cut, \"value\": str(int(count))}\n            for cut, count in unique_analogue_cuts.items()\n        ]\n    },\n    \"detail\": \"Filtered to 'Complete' status samples only. Split ActiveCuts on comma, stripped whitespace, and identified all cuts containing 'analogue' (case-insensitive). Counts represent total appearances across all samples.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "List all cuts that have the word 'analogue' in their name",
+    "first_seen": "2026-05-01T17:23:21+00:00",
+    "last_used": "2026-05-01T17:23:21+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
