@@ -102,5 +102,13 @@
     "last_used": "2026-05-01T13:17:16+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "a6f9ab0a9c140fc9": {
+    "code": "import json\nimport pandas as pd\n\n# Filter to Complete status\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Filter to samples containing Fentanyl (case-insensitive)\ndf_fentanyl = df_complete[\n    df_complete['AllIllicits'].fillna('').str.contains('fentanyl', case=False, na=False)\n].copy()\n\n# Group by month and count distinct samples\ndf_fentanyl['month'] = df_fentanyl['acquired_date'].dt.to_period('M')\nmonthly_counts = df_fentanyl.groupby('month')['id'].nunique().reset_index()\nmonthly_counts.columns = ['month', 'count']\n\n# Sort by month and format labels\nmonthly_counts = monthly_counts.sort_values('month')\nmonthly_counts['label'] = monthly_counts['month'].dt.to_timestamp().dt.strftime('%b %Y')\n\nlabels = monthly_counts['label'].tolist()\nvalues = [int(x) for x in monthly_counts['count'].tolist()]\n\n# Summary stats\ntotal_fentanyl_samples = df_fentanyl['id'].nunique()\ntotal_complete_samples = df_complete['id'].nunique()\nnum_months = len(monthly_counts)\npeak_month = monthly_counts.loc[monthly_counts['count'].idxmax()]\n\nresult = {\n    \"answer\": f\"Fentanyl was detected in {total_fentanyl_samples:,} distinct samples across {num_months} months. The peak was {int(peak_month['count'])} samples in {peak_month['label']}. This represents {(total_fentanyl_samples/total_complete_samples)*100:.1f}% of all {total_complete_samples:,} complete samples.\",\n    \"metrics\": [\n        {\"label\": \"Total Fentanyl Samples\", \"value\": total_fentanyl_samples},\n        {\"label\": \"Months with Data\", \"value\": num_months},\n        {\"label\": \"Peak Month Count\", \"value\": int(peak_month['count'])},\n        {\"label\": \"% of All Samples\", \"value\": f\"{(total_fentanyl_samples/total_complete_samples)*100:.1f}%\"}\n    ],\n    \"chart\": {\n        \"type\": \"line\",\n        \"labels\": labels,\n        \"values\": values,\n        \"label\": \"Fentanyl Samples per Month\"\n    },\n    \"detail\": \"Filtered to Complete status samples where AllIllicits contains 'Fentanyl' (case-insensitive). Counts each distinct sample ID once per month.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Line chart of monthly Fentanyl sample count",
+    "first_seen": "2026-05-01T16:00:55+00:00",
+    "last_used": "2026-05-01T16:00:55+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
