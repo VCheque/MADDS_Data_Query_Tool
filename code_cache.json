@@ -326,5 +326,13 @@
     "last_used": "2026-05-01T16:51:20+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "4a25b80c5d5eb35a": {
+    "code": "import json\nimport pandas as pd\n\n# Ensure we have the id column for sample counting\ncount_col = 'id' if 'id' in df.columns else None\n\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\n# Filter to Complete status only\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Count distinct samples per state\nif count_col:\n    state_counts = df_complete.groupby('StateofOriginCleaned')['id'].nunique().sort_index()\nelse:\n    state_counts = df_complete.groupby('StateofOriginCleaned').size().sort_index()\n\n# Remove any NaN state entries\nstate_counts = state_counts[state_counts.index.notna()]\n\n# Convert to lists for JSON serialization\nlabels = sorted(state_counts.index.tolist())\nvalues = [int(state_counts[state]) for state in labels]\n\nresult = {\n    \"answer\": f\"Sample distribution across {len(labels)} states. Total of {sum(values):,} distinct samples in the Complete dataset. States are sorted alphabetically on the X-axis with vertical labels for readability.\",\n    \"metrics\": [\n        {\"label\": \"Total States\", \"value\": len(labels)},\n        {\"label\": \"Total Samples\", \"value\": sum(values)},\n        {\"label\": \"Highest Count\", \"value\": max(values)},\n        {\"label\": \"State with Highest Count\", \"value\": labels[values.index(max(values))]}\n    ],\n    \"chart\": {\n        \"type\": \"bar\",\n        \"labels\": labels,\n        \"values\": values,\n        \"label\": \"Sample Count\",\n        \"colors\": False\n    },\n    \"detail\": \"Filtered to status=Complete. Counted distinct samples by StateofOriginCleaned, alphabetically sorted. X-axis labels should be rotated vertically for readability.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Create a bar chart of sample counts across all states. Sort states alphabetically and make the labels on the X-axis vertical.",
+    "first_seen": "2026-05-01T16:53:45+00:00",
+    "last_used": "2026-05-01T16:53:45+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
