@@ -142,5 +142,13 @@
     "last_used": "2026-05-01T16:11:53+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "adfbf8cbba7fde1a": {
+    "code": "import json\nimport pandas as pd\n\n# Defensive count helper\ncount_col = 'id' if 'id' in df.columns else None\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\n# Filter to Complete status\ndf_complete = df[df['status'] == 'Complete']\n\n# Get sample counts by state, sorted alphabetically\nstate_counts = df_complete.groupby('StateofOriginCleaned').apply(n_samples).reset_index(name='samples')\nstate_counts = state_counts.sort_values('StateofOriginCleaned')\n\n# Take top 30 states by sample count (to ensure we show 30 states)\nstate_counts = state_counts.nlargest(30, 'samples')\n\n# Sort alphabetically for display\nstate_counts = state_counts.sort_values('StateofOriginCleaned')\n\n# Prepare chart data\nlabels = state_counts['StateofOriginCleaned'].tolist()\nvalues = state_counts['samples'].astype(int).tolist()\n\nresult = {\n    \"answer\": f\"Sample counts across {len(labels)} states. Total samples: {sum(values):,}. Largest: {labels[values.index(max(values))]} ({max(values):,} samples). Smallest in top 30: {labels[values.index(min(values))]} ({min(values):,} samples).\",\n    \"metrics\": [\n        {\"label\": \"States Shown\", \"value\": len(labels)},\n        {\"label\": \"Total Samples\", \"value\": sum(values)},\n        {\"label\": \"Mean per State\", \"value\": round(sum(values) / len(values), 1)},\n        {\"label\": \"Median per State\", \"value\": int(pd.Series(values).median())}\n    ],\n    \"chart\": {\n        \"type\": \"bar\",\n        \"labels\": labels,\n        \"values\": values,\n        \"label\": \"Sample Count\",\n        \"colors\": True\n    },\n    \"detail\": \"Filtered to Complete status; top 30 states by sample count, sorted alphabetically. Each bar represents a unique state color.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Sample counts across 30 states. Sort states alphabetically and make bars a unique color. Produce vertical X-axis labels.",
+    "first_seen": "2026-05-01T16:15:16+00:00",
+    "last_used": "2026-05-01T16:15:16+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
