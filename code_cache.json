@@ -190,5 +190,13 @@
     "last_used": "2026-05-01T16:35:46+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "2059e99a63a4b8e6": {
+    "code": "import json\nimport pandas as pd\n\n# Setup: handle potential missing 'id' column\ncount_col = 'id' if 'id' in df.columns else None\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\n# Filter to Complete status\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Ensure acquired_date is datetime\ndf_complete['acquired_date'] = pd.to_datetime(df_complete['acquired_date'], errors='coerce')\n\n# Filter for 2023\ndf_complete = df_complete[df_complete['acquired_date'].dt.year == 2023]\n\n# Filter for Massachusetts\ndf_complete = df_complete[df_complete['StateofOriginCleaned'].str.lower() == 'massachusetts']\n\n# Filter for Fentanyl as PrimaryIllicit\ndf_complete = df_complete[\n    df_complete['PrimaryIllicit'].fillna('').str.lower() == 'fentanyl'\n]\n\n# Count total Fentanyl-primary samples in MA 2023\ntotal_fent_primary = n_samples(df_complete)\n\n# Identify samples with Medetomidine in AllIllicits (comma-separated)\n# Medetomidine could appear as a primary or secondary illicit\nhas_medetomidine = df_complete['AllIllicits'].fillna('').str.contains(\n    'medetomidine', case=False, na=False\n)\n\nmedetomidine_count = n_samples(df_complete[has_medetomidine])\n\n# Calculate percentage\nif total_fent_primary > 0:\n    pct = (medetomidine_count / total_fent_primary) * 100\n    pct = round(pct, 1)\nelse:\n    pct = 0.0\n\n# Build result\nresult = {\n    \"answer\": f\"{pct}% of Fentanyl-primary samples from Massachusetts in 2023 contained Medetomidine ({medetomidine_count} out of {total_fent_primary} samples).\",\n    \"metrics\": [\n        {\"label\": \"Fentanyl-Primary Samples (MA, 2023)\", \"value\": int(total_fent_primary)},\n        {\"label\": \"With Medetomidine Detected\", \"value\": int(medetomidine_count)},\n        {\"label\": \"Co-detection Rate\", \"value\": f\"{pct}%\"}\n    ],\n    \"detail\": \"Filtered to Complete status, year 2023, Massachusetts state, PrimaryIllicit='Fentanyl'. Medetomidine detection checked in AllIllicits column (includes primary and secondary illicit detections). Uses distinct sample counts (id.nunique()).\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Percent of Medetomidine appearances in Fentanyl-primary samples from Massachusetts in 2023.",
+    "first_seen": "2026-05-01T16:36:12+00:00",
+    "last_used": "2026-05-01T16:36:12+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
