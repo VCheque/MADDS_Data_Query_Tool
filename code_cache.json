@@ -510,5 +510,13 @@
     "last_used": "2026-05-01T17:15:20+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "d48dea8505c32c44": {
+    "code": "import json\nimport pandas as pd\nfrom scipy import stats\n\n# Setup: defensive count helper\ncount_col = 'id' if 'id' in df.columns else None\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\n# Filter to Complete status\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Filter to New York\ndf_ny = df_complete[df_complete['StateofOriginCleaned'].fillna('').str.lower() == 'new york'].copy()\n\n# Filter to stimulant-primary samples\ndf_stim = df_ny[df_ny['PrimaryDrugClass'].fillna('').str.lower() == 'stimulant'].copy()\n\n# Count total stimulant-primary samples in NY\ntotal_stim_samples = n_samples(df_stim)\n\n# Count stimulant-primary samples in NY that also contain nitazene\n# (Nitazene can appear in AllIllicits as a secondary substance)\ndf_stim['has_nitazene'] = df_stim['AllIllicits'].fillna('').str.contains('nitazene', case=False, na=False)\nnitazene_stim_samples = n_samples(df_stim[df_stim['has_nitazene']])\n\n# Calculate percentage\nif total_stim_samples > 0:\n    pct_nitazene = (nitazene_stim_samples / total_stim_samples) * 100\nelse:\n    pct_nitazene = 0\n\nresult = {\n    \"answer\": f\"Nitazene appears in {nitazene_stim_samples} of {total_stim_samples} stimulant-primary samples from New York ({pct_nitazene:.1f}%).\",\n    \"metrics\": [\n        {\"label\": \"Stimulant-primary samples (NY)\", \"value\": total_stim_samples},\n        {\"label\": \"With nitazene detected\", \"value\": nitazene_stim_samples},\n        {\"label\": \"Co-occurrence rate\", \"value\": f\"{pct_nitazene:.1f}%\"}\n    ],\n    \"detail\": \"Filtered to Complete status, New York state, and samples with PrimaryDrugClass = 'Stimulant'. Nitazene detected via AllIllicits column (includes both primary and secondary detections).\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "ercent of nitazene appearances in stimulant-primary samples from New York",
+    "first_seen": "2026-05-01T17:15:52+00:00",
+    "last_used": "2026-05-01T17:15:52+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
