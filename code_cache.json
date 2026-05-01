@@ -590,5 +590,13 @@
     "last_used": "2026-05-01T17:22:31+00:00",
     "hit_count": 2,
     "prompt_signature": "6347a02a6dff"
+  },
+  "a0af2a35d602b1ad": {
+    "code": "import json\nimport pandas as pd\n\n# Filter to Complete status only\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Helper to count distinct samples\ncount_col = 'id' if 'id' in df.columns else None\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\n# Filter to Massachusetts\ndf_ma = df_complete[df_complete['StateofOriginCleaned'] == 'Massachusetts'].copy()\n\n# Count fentanyl samples (AllIllicits contains fentanyl)\nfentanyl_mask = df_ma['AllIllicits'].str.contains('fentanyl', case=False, na=False)\nfentanyl_count = n_samples(df_ma[fentanyl_mask])\n\n# Count cocaine samples (AllIllicits contains cocaine)\ncocaine_mask = df_ma['AllIllicits'].str.contains('cocaine', case=False, na=False)\ncocaine_count = n_samples(df_ma[cocaine_mask])\n\n# Calculate ratio\nif cocaine_count > 0:\n    ratio = fentanyl_count / cocaine_count\nelse:\n    ratio = None\n\ntotal_ma_samples = n_samples(df_ma)\n\nresult = {\n    \"answer\": f\"In Massachusetts, the ratio of fentanyl samples to cocaine samples is {ratio:.2f}:1 ({fentanyl_count} fentanyl samples vs {cocaine_count} cocaine samples out of {total_ma_samples} Complete samples total).\",\n    \"metrics\": [\n        {\"label\": \"Fentanyl Samples (MA)\", \"value\": fentanyl_count},\n        {\"label\": \"Cocaine Samples (MA)\", \"value\": cocaine_count},\n        {\"label\": \"Fentanyl:Cocaine Ratio\", \"value\": f\"{ratio:.2f}:1\"}\n    ],\n    \"detail\": \"Filtered to Complete status samples from Massachusetts. Counted distinct samples containing fentanyl or cocaine in the AllIllicits field (case-insensitive). Samples may be counted in both groups if they contain both substances (polysubstance).\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "What is the ratio of fentanyl samples to cocaine samples in Massachusetts",
+    "first_seen": "2026-05-01T17:22:59+00:00",
+    "last_used": "2026-05-01T17:22:59+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
