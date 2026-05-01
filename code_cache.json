@@ -214,5 +214,13 @@
     "last_used": "2026-05-01T16:37:28+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "76ec75e9fc847061": {
+    "code": "import json\nimport pandas as pd\n\n# Filter to Complete status\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Define polysubstance: AllIllicits contains a comma (multiple substances)\ndf_complete['is_polysubstance'] = df_complete['AllIllicits'].fillna('').str.contains(',')\n\n# Group by state and compute polysubstance rate\nstate_stats = df_complete.groupby('StateofOriginCleaned').agg(\n    total_samples=('id', 'nunique'),\n    polysubstance_samples=('is_polysubstance', 'sum')\n).reset_index()\n\n# Calculate rate and sort\nstate_stats['polysubstance_rate'] = (state_stats['polysubstance_samples'] / state_stats['total_samples'] * 100).round(1)\nstate_stats = state_stats.sort_values('polysubstance_rate', ascending=False)\n\n# Get the top state\ntop_state = state_stats.iloc[0]\nstate_name = top_state['StateofOriginCleaned']\nrate = top_state['polysubstance_rate']\npoly_count = int(top_state['polysubstance_samples'])\ntotal_count = int(top_state['total_samples'])\n\n# Build result\nresult = {\n    \"answer\": f\"{state_name} had the highest polysubstance rate at {rate}% ({poly_count} of {total_count} samples contained multiple illicit substances).\",\n    \"metrics\": [\n        {\"label\": \"State with Highest Rate\", \"value\": state_name},\n        {\"label\": \"Polysubstance Rate\", \"value\": f\"{rate}%\"},\n        {\"label\": \"Polysubstance Samples\", \"value\": poly_count},\n        {\"label\": \"Total Samples\", \"value\": total_count}\n    ],\n    \"table\": {\n        \"headers\": [\"State\", \"Polysubstance Rate (%)\", \"Polysubstance Samples\", \"Total Samples\"],\n        \"rows\": [[row['StateofOriginCleaned'], row['polysubstance_rate'], int(row['polysubstance_samples']), int(row['total_samples'])] \n                 for _, row in state_stats.head(10).iterrows()]\n    },\n    \"detail\": \"Polysubstance defined as samples with multiple illicit substances in AllIllicits (comma-separated). Filtered to Complete status samples only.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Which state had the highest polysubstance rate?",
+    "first_seen": "2026-05-01T16:38:24+00:00",
+    "last_used": "2026-05-01T16:38:24+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
