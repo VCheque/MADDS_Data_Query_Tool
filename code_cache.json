@@ -70,5 +70,13 @@
     "last_used": "2026-05-01T13:12:09+00:00",
     "hit_count": 2,
     "prompt_signature": "6347a02a6dff"
+  },
+  "4e833159a51ca7e5": {
+    "code": "import json\nimport pandas as pd\n\n# Ensure we're working with Complete samples only\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Count distinct samples by state\n# Use id column for distinct sample count\nstate_counts = df_complete.groupby('StateofOriginCleaned')['id'].nunique().sort_values(ascending=False).reset_index()\nstate_counts.columns = ['State', 'Samples']\n\n# Convert to table format\nheaders = ['State', 'Samples']\nrows = []\nfor _, row in state_counts.iterrows():\n    rows.append([row['State'], int(row['Samples'])])\n\ntotal_samples = df_complete['id'].nunique()\ntotal_states = state_counts.shape[0]\n\nresult = {\n    \"answer\": f\"Sample counts by state: {total_samples:,} distinct samples across {total_states} states. Massachusetts leads with {int(state_counts.iloc[0]['Samples']):,} samples, followed by {state_counts.iloc[1]['State']} with {int(state_counts.iloc[1]['Samples']):,}.\",\n    \"metrics\": [\n        {\"label\": \"Total Samples\", \"value\": f\"{total_samples:,}\"},\n        {\"label\": \"States Represented\", \"value\": str(total_states)},\n        {\"label\": \"Top State (MA)\", \"value\": f\"{int(state_counts.iloc[0]['Samples']):,}\"}\n    ],\n    \"table\": {\n        \"headers\": headers,\n        \"rows\": rows\n    },\n    \"detail\": \"Counts distinct samples (id column) per state. Limited to Complete status rows with fully coded lab data.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Table of sample counts by state",
+    "first_seen": "2026-05-01T13:13:23+00:00",
+    "last_used": "2026-05-01T13:13:23+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
