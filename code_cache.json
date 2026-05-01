@@ -67,8 +67,8 @@
     "code": "import json\nimport pandas as pd\n\n# Filter to Complete status and year 2024\ndf_complete = df[df['status'] == 'Complete']\ndf_2024 = df_complete[df_complete['acquired_date'].dt.year == 2024]\n\n# Split ActiveCuts on comma, explode, strip whitespace\ncuts = (df_2024['ActiveCuts']\n        .fillna('')\n        .str.split(',')\n        .explode()\n        .str.strip())\n\n# Remove empty strings and \"None Detected\"\ncuts = cuts[(cuts != '') & (cuts.str.lower() != 'none detected')]\n\n# Count and get top 10\ntop_10 = cuts.value_counts().head(10)\n\n# Prepare chart data\nlabels = [str(x) for x in top_10.index.tolist()]\nvalues = [int(x) for x in top_10.values.tolist()]\n\n# Sample count\nn_samples = df_2024['id'].nunique()\n\nresult = {\n    \"answer\": f\"In 2024, the top 10 active cuts detected across {n_samples:,} Complete samples were led by {labels[0]} ({values[0]} samples), followed by {labels[1]} ({values[1]} samples) and {labels[2]} ({values[2]} samples). Benzocaine, Lidocaine, and other local anesthetics dominate the adulterant landscape.\",\n    \"metrics\": [\n        {\"label\": \"Samples (2024)\", \"value\": n_samples},\n        {\"label\": \"Top Cut\", \"value\": labels[0]},\n        {\"label\": \"Top Cut Count\", \"value\": values[0]}\n    ],\n    \"chart\": {\n        \"type\": \"bar\",\n        \"labels\": labels,\n        \"values\": values,\n        \"label\": \"Active Cuts\",\n        \"colors\": False\n    },\n    \"detail\": \"Filtered to status='Complete' and acquired_date.dt.year==2024. Counts each active cut appearance once per sample where detected. 'None Detected' excluded.\"\n}\n\nprint(json.dumps(result, default=str))",
     "first_question": "Bar chart of top 10 active cuts in 2024",
     "first_seen": "2026-04-29T21:22:46+00:00",
-    "last_used": "2026-04-29T21:22:46+00:00",
-    "hit_count": 1,
+    "last_used": "2026-05-01T13:12:09+00:00",
+    "hit_count": 2,
     "prompt_signature": "6347a02a6dff"
   }
 }
