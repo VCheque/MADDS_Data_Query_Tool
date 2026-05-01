@@ -134,5 +134,13 @@
     "last_used": "2026-05-01T16:10:57+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "7e11e028f9886ae9": {
+    "code": "import json\nimport pandas as pd\n\n# Filter to Complete status only\ndf_complete = df[df['status'] == 'Complete']\n\n# Count unique samples by state\nstate_counts = df_complete.groupby('StateofOriginCleaned')['id'].nunique().sort_index()\n\n# Remove NaN state if present\nstate_counts = state_counts[state_counts.index.notna()]\n\n# Prepare chart data\nlabels = list(state_counts.index)\nvalues = [int(v) for v in state_counts.values]\n\nresult = {\n    \"answer\": f\"Sample counts across {len(labels)} states. Total {state_counts.sum()} complete samples. States sorted alphabetically from {labels[0]} to {labels[-1]}.\",\n    \"metrics\": [\n        {\"label\": \"Total States\", \"value\": len(labels)},\n        {\"label\": \"Total Samples\", \"value\": int(state_counts.sum())},\n        {\"label\": \"Largest State\", \"value\": f\"{labels[state_counts.argmax()]} ({int(state_counts.max())})\"}\n    ],\n    \"chart\": {\n        \"type\": \"bar\",\n        \"labels\": labels,\n        \"values\": values,\n        \"label\": \"Samples by State\",\n        \"colors\": True\n    },\n    \"detail\": \"Counts distinct sample IDs per state from Complete-status records only, sorted alphabetically.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Bar chart of sample count by state. Label each line with its state and make each line a different color. Sort the states alphabetically.",
+    "first_seen": "2026-05-01T16:11:53+00:00",
+    "last_used": "2026-05-01T16:11:53+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
