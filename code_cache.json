@@ -126,5 +126,13 @@
     "last_used": "2026-05-01T16:10:29+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "48c414acaab47778": {
+    "code": "import json\nimport pandas as pd\n\n# Filter to Complete status only\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Count distinct samples by state\nstate_counts = df_complete.groupby('StateofOriginCleaned')['id'].nunique().sort_values(ascending=False)\n\n# Prepare chart data\nlabels = state_counts.index.tolist()\nvalues = [int(v) for v in state_counts.values]\n\nresult = {\n    \"answer\": f\"Sample distribution across {len(labels)} states. {labels[0]} leads with {values[0]:,} samples, followed by {labels[1]} with {values[1]:,}. Total of {df_complete['id'].nunique():,} distinct samples across all states.\",\n    \"metrics\": [\n        {\"label\": \"Total Samples\", \"value\": df_complete['id'].nunique()},\n        {\"label\": \"States Represented\", \"value\": len(labels)},\n        {\"label\": \"Top State\", \"value\": f\"{labels[0]} ({values[0]:,})\"}\n    ],\n    \"chart\": {\n        \"type\": \"bar\",\n        \"labels\": labels,\n        \"values\": values,\n        \"label\": \"Sample Count by State\",\n        \"colors\": True\n    },\n    \"detail\": \"Counts distinct sample IDs (same physical sample may appear multiple rows). Filtered to Complete status only.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Bar chart of sample count by state.\n Label each line with its state and make each line a different color.",
+    "first_seen": "2026-05-01T16:10:57+00:00",
+    "last_used": "2026-05-01T16:10:57+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
