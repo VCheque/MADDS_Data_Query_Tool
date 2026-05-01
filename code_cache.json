@@ -294,5 +294,13 @@
     "last_used": "2026-05-01T16:49:01+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "e8063b687b79c51a": {
+    "code": "import json\nimport pandas as pd\n\n# Defensive count column setup\ncount_col = 'id' if 'id' in df.columns else None\n\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\n# Filter to Complete status\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Filter to 2025\ndf_2025 = df_complete[df_complete['acquired_date'].dt.year == 2025].copy()\n\n# Filter to Massachusetts\ndf_ma = df_2025[df_2025['StateofOriginCleaned'].fillna('').str.lower() == 'massachusetts'].copy()\n\n# Filter to samples containing Medetomidine in AllIllicits\ndf_medo = df_ma[df_ma['AllIllicits'].fillna('').str.contains('medetomidine', case=False, na=False)].copy()\n\n# Count by town\ntown_counts = df_medo['TownofOriginCleaned'].fillna('Unknown').value_counts()\n\nif len(town_counts) == 0:\n    result = {\n        \"answer\": \"No samples with Medetomidine were detected in Massachusetts towns in 2025.\",\n        \"detail\": \"Filtered to Complete status, year 2025, Massachusetts state, AllIllicits containing 'Medetomidine'.\"\n    }\nelse:\n    top_town = town_counts.index[0]\n    top_count = int(town_counts.iloc[0])\n    \n    result = {\n        \"answer\": f\"{top_town} had the highest count of Medetomidine-positive samples in Massachusetts during 2025, with {top_count} sample(s).\",\n        \"metrics\": [\n            {\"label\": \"Top Town\", \"value\": top_town},\n            {\"label\": \"Medetomidine Samples\", \"value\": top_count},\n            {\"label\": \"Total MA Towns with Medetomidine\", \"value\": len(town_counts)}\n        ],\n        \"list\": {\n            \"items\": [\n                {\"label\": town, \"value\": str(int(count))}\n                for town, count in town_counts.head(10).items()\n            ]\n        },\n        \"detail\": \"Filtered to Complete status, year 2025, Massachusetts state. Counted unique samples (by id) per town in AllIllicits field.\"\n    }\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Which Massachusetts town had the highest count of Medetomidine in 2025?",
+    "first_seen": "2026-05-01T16:49:56+00:00",
+    "last_used": "2026-05-01T16:49:56+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
