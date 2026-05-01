@@ -614,5 +614,13 @@
     "last_used": "2026-05-01T17:23:51+00:00",
     "hit_count": 1,
     "prompt_signature": "6347a02a6dff"
+  },
+  "81f4e5eaa0b30835": {
+    "code": "import json\nimport pandas as pd\n\n# Filter to Complete status and Massachusetts\ndf_complete = df[df['status'] == 'Complete'].copy()\ndf_ma = df_complete[df_complete['StateofOriginCleaned'] == 'Massachusetts'].copy()\n\n# Ensure acquired_date is datetime\ndf_ma['acquired_date'] = pd.to_datetime(df_ma['acquired_date'], errors='coerce')\n\n# Get the last quarter's date range\nmax_date = df_ma['acquired_date'].max()\nquarter_start = max_date - pd.DateOffset(months=3)\n\n# Filter to last quarter\ndf_last_quarter = df_ma[df_ma['acquired_date'] >= quarter_start].copy()\n\n# Extract year and count unique samples per year\ndf_last_quarter['year'] = df_last_quarter['acquired_date'].dt.year\n\n# Count unique samples by year\nif 'id' in df_last_quarter.columns:\n    year_counts = df_last_quarter.groupby('year')['id'].nunique().sort_values(ascending=False)\nelse:\n    year_counts = df_last_quarter.groupby('year').size().sort_values(ascending=False)\n\n# Get the year with most samples\nif len(year_counts) > 0:\n    top_year = year_counts.index[0]\n    top_count = year_counts.iloc[0]\n    \n    # Get date range for context\n    quarter_start_str = quarter_start.strftime('%b %d, %Y')\n    max_date_str = max_date.strftime('%b %d, %Y')\n    \n    result = {\n        \"answer\": f\"In Massachusetts' last quarter ({quarter_start_str} to {max_date_str}), {top_year} had the most samples submitted with {int(top_count)} unique samples.\",\n        \"metrics\": [\n            {\"label\": \"Top Year\", \"value\": str(int(top_year))},\n            {\"label\": \"Samples in Top Year\", \"value\": str(int(top_count))},\n            {\"label\": \"Quarter Span\", \"value\": f\"{quarter_start_str} to {max_date_str}\"}\n        ],\n        \"detail\": \"Filtered to 'Complete' status records from Massachusetts in the most recent 3-month period. Counted unique sample IDs per year.\"\n    }\nelse:\n    result = {\n        \"answer\": \"No samples found for Massachusetts in the last quarter.\",\n        \"detail\": \"Filtered to 'Complete' status records from Massachusetts.\"\n    }\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Which year had the most samples submitted in the last quarter for Massachusetts?",
+    "first_seen": "2026-05-01T17:24:39+00:00",
+    "last_used": "2026-05-01T17:24:39+00:00",
+    "hit_count": 1,
+    "prompt_signature": "6347a02a6dff"
   }
 }
