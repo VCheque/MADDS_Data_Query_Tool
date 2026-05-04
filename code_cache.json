@@ -59,8 +59,8 @@
     "code": "import json\nimport pandas as pd\n\n# Defensive count helper\ncount_col = 'id' if 'id' in df.columns else None\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\n# Filter to Complete status only\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# For each state, find the most common primary illicit substance\nstate_illicit = df_complete.groupby('StateofOriginCleaned')['PrimaryIllicit'].value_counts().reset_index(name='count')\nstate_illicit = state_illicit.sort_values(['StateofOriginCleaned', 'count'], ascending=[True, False])\nstate_illicit = state_illicit.drop_duplicates(subset=['StateofOriginCleaned'], keep='first')\n\n# Build output\nresult_list = []\nfor _, row in state_illicit.iterrows():\n    state = row['StateofOriginCleaned']\n    substance = row['PrimaryIllicit']\n    count = int(row['count'])\n    result_list.append({\n        'label': f\"{state}\",\n        'value': f\"{substance} ({count})\"\n    })\n\n# Sort by state name for readability\nresult_list.sort(key=lambda x: x['label'])\n\ntotal_samples = n_samples(df_complete)\nnum_states = len(result_list)\n\nresult = {\n    'answer': f\"Across {num_states} states in {total_samples:,} samples, the most common primary illicit substance varies by location. Fentanyl dominates most states, while some regions show cocaine or heroin as the primary detection.\",\n    'metrics': [\n        {'label': 'Total Samples (Complete)', 'value': f\"{total_samples:,}\"},\n        {'label': 'States with Data', 'value': str(num_states)}\n    ],\n    'list': {\n        'items': result_list\n    },\n    'detail': 'Primary illicit substance is determined by the PrimaryIllicit column (single primary detection per sample), ranked by frequency within each state.'\n}\n\nprint(json.dumps(result, default=str))",
     "first_question": "what is the most common active illicit substance in each state",
     "first_seen": "2026-04-29T21:22:26+00:00",
-    "last_used": "2026-04-29T21:22:26+00:00",
-    "hit_count": 1,
+    "last_used": "2026-05-04T15:14:58+00:00",
+    "hit_count": 2,
     "prompt_signature": "6347a02a6dff"
   },
   "5bfb531973e290cb": {
