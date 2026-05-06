@@ -7,8 +7,17 @@ import hashlib
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
-from anthropic import Anthropic
 from dotenv import load_dotenv
+
+try:
+    from anthropic import Anthropic
+except ImportError:
+    Anthropic = None
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
 
 load_dotenv()
 
@@ -80,6 +89,20 @@ CAT_COLORS = [
     "#8B5CF6","#059669","#D97706","#DC2626",
     "#7C3AED","#0891B2",
 ]
+
+# Reference mapping: 2-digit Census state FIPS -> 2-letter USPS code.
+# Used ONLY internally to parse the US-counties GeoJSON (which keys features by
+# 5-digit FIPS like "25013" = Hampden, MA). Not exposed to the model and not used
+# to translate user input — that's done inline by the model itself.
+_STATE_FIPS_TO_CODE = {
+    "01":"AL","02":"AK","04":"AZ","05":"AR","06":"CA","08":"CO","09":"CT","10":"DE",
+    "11":"DC","12":"FL","13":"GA","15":"HI","16":"ID","17":"IL","18":"IN","19":"IA",
+    "20":"KS","21":"KY","22":"LA","23":"ME","24":"MD","25":"MA","26":"MI","27":"MN",
+    "28":"MS","29":"MO","30":"MT","31":"NE","32":"NV","33":"NH","34":"NJ","35":"NM",
+    "36":"NY","37":"NC","38":"ND","39":"OH","40":"OK","41":"OR","42":"PA","44":"RI",
+    "45":"SC","46":"SD","47":"TN","48":"TX","49":"UT","50":"VT","51":"VA","53":"WA",
+    "54":"WV","55":"WI","56":"WY",
+}
 
 # ── CSS ───────────────────────────────────────────────────────────────────────
 st.markdown(f"""
@@ -211,7 +234,7 @@ st.markdown(f"""
 RELEVANT_COLS = [
     "id","acquired_date","groupid","tenantid","suspected",
     "confirmed_lab_substances","confirmed_lab_components","preliminary_ftir_substances",
-    "TownofOriginCleaned","CountyofOriginCleaned","StateofOriginCleaned",
+    "TownofOriginCleaned","County_State","StateofOriginCleaned",
     "PrimaryIllicit","AllIllicits","ActiveCuts","SuspectedCleaned",
     "DrugClasses","PrimaryDrugClass","status",
 ]
@@ -226,6 +249,14 @@ SCHEMA_DESCRIPTION = """
 - tenantid: tenant/organisation identifier.
 - suspected: free-text suspected substance(s) as reported by submitter.
 - confirmed_lab_substances: pipe-separated substances confirmed by lab e.g. "Fentanyl|Heroin|Caffeine".
+  This is the BEST source for questions about chemicals/drugs identified, detected, or confirmed
+  in the sample. It may include both illicit drugs and other detected substances/cuts.
+  Common informal aliases users may use for this column: "Lab_Results", "Lab Results",
+  "lab", "lab confirmed", "confirmed". Treat any of these as references to confirmed_lab_substances.
+  For CROSS-CHECK / agreement / closeness questions (comparing detection methods —
+  Suspected vs. Lab, FTIR vs. Lab, Field vs. Lab, etc.) treat confirmed_lab_substances as the
+  GROUND TRUTH / authoritative column. Other detection columns (suspected, SuspectedCleaned,
+  preliminary_ftir_substances, ActiveCuts) are evaluated AGAINST it.
 - confirmed_lab_components: pipe-separated RELATIVE PROPORTION numbers, position-aligned 1:1 with
   confirmed_lab_substances in the same row. Each number tells you how much of that substance is
   present RELATIVE TO THE OTHERS in that same sample (typically the smallest detected component is
@@ -236,14 +267,23 @@ SCHEMA_DESCRIPTION = """
   percentages summing to 100, and not absolute concentrations (mg, %). Only meaningful for
   within-sample comparisons (e.g. "is xylazine larger than fentanyl in this sample?") or for
   averaging ratios across samples — never treat them as standalone quantities.
-- preliminary_ftir_substances: pipe-separated FTIR preliminary substances.
+- preliminary_ftir_substances: pipe-separated FTIR preliminary substances. Use this for FTIR result
+  questions, preliminary ID questions, and agreement/disagreement between FTIR and confirmed lab results.
 - TownofOriginCleaned: cleaned town name where the sample was originated/tested.
-- CountyofOriginCleaned: cleaned county name.
-- StateofOriginCleaned: full US state name e.g. "Massachusetts", "Rhode Island".
+- County_State: combined "County name, ST" string e.g. "Hampden, MA", "Berkshire, MA". Always
+  includes the 2-letter state code. Use this column (NOT a separate county column) for any
+  county-level analysis, grouping, or county map. Either "Hampden, MA" or "Hampden County, MA"
+  forms work for county-level maps.
+- StateofOriginCleaned: full US state name e.g. "Massachusetts", "Rhode Island". When the user
+  types an abbreviation like "MA", "RI", "CT", resolve it directly to the full state name as a
+  string literal in your code (you already know that "MA" means "Massachusetts"). NEVER build a
+  lookup dictionary — not a 50-state one and not even a one-entry one. Just write the full name:
+      df_state = df[df['StateofOriginCleaned'].str.lower() == 'massachusetts']
 - PrimaryIllicit: single primary illicit substance e.g. "Fentanyl", "Cocaine", "None Detected".
 - AllIllicits: comma-separated all illicit substances e.g. "Fentanyl, Heroin". Split on "," and trim.
 - ActiveCuts: comma-separated active adulterants e.g. "Xylazine, Caffeine" or "None Detected". Split on "," and trim.
-- SuspectedCleaned: cleaned suspected substance.
+- SuspectedCleaned: cleaned suspected substance. Prefer this over `suspected` when both are available
+  for counts, rankings, or comparisons because it is standardized.
 - DrugClasses: comma-separated drug classes e.g. "Opioid, Stimulant".
 - PrimaryDrugClass: drug class of PrimaryIllicit e.g. "Opioid", "Stimulant", "Benzodiazepine".
 - status: Only "Complete" rows have fully coded lab columns. Values: Complete, Tested, Initial, Untested.
@@ -259,6 +299,7 @@ EXAMPLES = [
     "Table of top 10 towns by sample count",
     "Which state had the highest polysubstance rate?",
     "% of Medetomidine in Fentanyl-primary samples from Massachusetts",
+    "For MA data, what changed from March 2026 to April 2026 in confirmed drugs, combinations, FTIR, and suspected substances?",
 ]
 
 SYSTEM_PROMPT_TEMPLATE = """You are a data analyst for a harm reduction drug checking platform.
@@ -287,13 +328,62 @@ ANALYSIS RULES:
   Use len(df) only when the user explicitly asks for "rows" or "records".
 - ALWAYS filter to df[df['status'] == 'Complete'] unless the question explicitly asks otherwise. The
   "Complete" subset is the only slice with fully coded lab columns; everything else is in-progress.
+- SUBSTANCE LOOKUP — when filtering on a specific substance, search the UNION of the three
+  string columns. A sample is positive if the substance appears in ANY of them:
+      name = 'xylazine'  # or whatever the user named
+      m1 = df['confirmed_lab_substances'].fillna('').str.contains(name, case=False, na=False)
+      m2 = df['ActiveCuts'].fillna('').str.contains(name, case=False, na=False)
+      m3 = df['preliminary_ftir_substances'].fillna('').str.contains(name, case=False, na=False)
+      positive = df[m1 | m2 | m3]
+  NEVER search only AllIllicits — AllIllicits contains only illicit drugs (Fentanyl, Cocaine,
+  Heroin, Methamphetamine, etc.). Cuts/adulterants (Xylazine, Medetomidine, BTMPS, Lidocaine,
+  Caffeine) are NOT illicits and NEVER appear there.
+- ALLILLICITS PAIRING RULE — if the question's logic genuinely requires AllIllicits (e.g. "list
+  the illicit substances", "rank illicits by frequency", "any illicit detected"), you MUST still
+  combine it with ActiveCuts so cuts aren't silently dropped:
+      illicits_present = df['AllIllicits'].fillna('').str.contains(name, case=False, na=False)
+      cuts_present     = df['ActiveCuts'].fillna('').str.contains(name, case=False, na=False)
+      positive = df[illicits_present | cuts_present]
+  The only exception is when the user EXPLICITLY asks about "illicits only" and excludes cuts.
 - acquired_date is a pandas datetime64 column. Use pd.to_datetime(..., errors='coerce') if you have any
   doubt about the dtype. For year filters use .dt.year; for month filters .dt.month; for date ranges
   use boolean masks like (df['acquired_date'] >= '2024-01-01') & (df['acquired_date'] < '2025-01-01').
+- Geographic aliases: when the user types a U.S. postal abbreviation (MA, RI, CT, CA, TX, NY, etc.),
+  resolve it INLINE to the full state name as a string literal in your code. You already know the
+  abbreviations — they're standard. NEVER embed a state-alias dictionary in your code; just write
+  the full name directly:
+      df_ma = df[df['StateofOriginCleaned'].str.lower() == 'massachusetts']
+  This applies to any single state filter or any small set the user mentions explicitly.
 - AllIllicits and ActiveCuts are comma-separated strings. Split with str.split(',') and trim each part
   with str.strip(). To count occurrences across rows, use .explode() after splitting into a list.
+- NEVER iterate, split, or .explode() a Series without first calling .fillna('') (or .fillna('')
+  combined with .astype(str)). Iterating a NaN raises "TypeError: 'float' object is not iterable".
+  Safe pattern for any pipe- or comma-separated column:
+      series = df['ColName'].fillna('').astype(str)
+      parts = series.str.split(r'[|,]').apply(lambda lst: [x.strip() for x in lst if x.strip()])
+  Apply the same defensive cast inside any iterrows() loop:
+      raw = str(row.get('confirmed_lab_substances') or '')   # never raw = row['...'].split(...)
 - confirmed_lab_substances and preliminary_ftir_substances are PIPE-separated (|), not comma-separated.
   Split on '|' and strip whitespace.
+- For questions about chemicals/drugs identified/detected/confirmed, prefer confirmed_lab_substances
+  over AllIllicits because AllIllicits is limited to illicit categories and may omit non-illicit
+  compounds or cuts that were still identified by the lab.
+- For suspected-substance questions, prefer SuspectedCleaned when present; fall back to suspected only
+  if SuspectedCleaned is missing.
+- For substance combination / combo / co-occurring-mixture questions, derive the combination from
+  confirmed_lab_substances per sample: split on '|', strip whitespace, lower-case, drop blanks,
+  deduplicate within the sample, sort alphabetically, and join with ' + ' to create one canonical
+  combination string per sample. Exclude empty combinations. Use sample-level counts, not row counts.
+- For "what changed", "what's different", "compare month A to month B", or similar comparison language:
+  compute the same metric separately for each requested period, outer-join on the category, fill
+  missing counts with 0, and calculate:
+    1. absolute change = period_2_count - period_1_count
+    2. direction = increased / decreased / unchanged
+    3. newly appeared items (0 -> positive)
+    4. disappeared items (positive -> 0)
+  Summarize the biggest increases and decreases in the answer, and return a table with both periods'
+  counts plus the delta. If multiple domains are requested in one question, treat them as separate
+  sections in one combined table or summarize the top changes from each domain in the answer.
 - LAB COMPONENT RATIOS: confirmed_lab_components pairs index-by-index with confirmed_lab_substances
   in each row. Use this column for any "ratio", "relative amount", "how much of X", "dominant",
   or "concentration" style question. Always parse the two columns together and zip them. Example
@@ -373,6 +463,7 @@ CHOOSE THE RIGHT OUTPUT TYPE:
 - Rankings / top-N / distributions  ->  chart (bar) or list
 - Trends over time                  ->  chart (line)
 - Part-of-whole, up to 8 categories ->  chart (pie) with colors: true
+- Geographic comparisons across US states ->  chart (map, scope "us_states")
 - Multi-column comparisons          ->  table
 - Simple enumeration                ->  list
 - Single statistic                  ->  metrics only
@@ -380,11 +471,26 @@ CHOOSE THE RIGHT OUTPUT TYPE:
                                         explaining what it means in plain English
 
 CHART SPEC:
-{{"type": "bar"|"line"|"pie", "labels": [...], "values": [...], "label": "Series name", "colors": true|false}}
+{{"type": "bar"|"line"|"pie"|"map", "labels": [...], "values": [...], "label": "Series name", "colors": true|false}}
   - labels and values must be the SAME LENGTH. Never return mismatched lengths.
   - For line charts of monthly trends, format labels as "Jan 2024", "Feb 2024", ... (use strftime("%b %Y")).
   - colors true  = one distinct color per bar/slice (good for categorical data with distinct groups)
   - colors false = all bars single teal color (good for ranked/ordered data of one type)
+  - For "map": two scopes are supported.
+      scope "us_states":   labels = 2-LETTER USPS codes (e.g. ["MA", "RI", "CT"]). You already
+                           know all 50 codes — write them inline as string literals. Never
+                           build a state-name lookup dict. values = numeric per state.
+      scope "us_counties": labels = strings from the County_State column ("Hampden, MA",
+                           "Berkshire, MA"). values = numeric per county.
+                           Best for sub-state questions ("map of samples within Massachusetts")
+                           or fine-grained multi-state county comparisons. The renderer
+                           auto-zooms to whichever counties are present.
+    Optional "colorscale" override on either scope. NOTE: "colorscale" is NOT a boolean. Either
+    OMIT it (the renderer uses a teal gradient by default) or pass a Plotly named scale string
+    like "viridis", "tealgrn", "ylgnbu", or "blues". DO NOT confuse with bar/pie's
+    "colors: true|false" — that field doesn't exist for maps.
+    Town-level maps are NOT supported (no coordinates in the data) — for town questions return
+    a TABLE keyed by TownofOriginCleaned with a one-line "detail" note.
 
 TABLE SPEC:
 {{"headers": ["Col1", "Col2", ...], "rows": [["v", "v", ...], ...]}}  // max 50 rows
@@ -458,6 +564,76 @@ ratio fent/xyl ONLY when both are present and both are numeric; then aggregate.
   emphasizes these are within-sample relative proportions, not absolute amounts. Use a
   histogram-style bar chart of binned ratio values if a visual makes sense.
 
+Question: "For MA data, what changed from March 2026 to April 2026?"
+Approach: interpret MA as Massachusetts. Filter on StateofOriginCleaned == 'Massachusetts'.
+Honor any "all status" / "include in-progress" hint in the question; otherwise default to
+status == 'Complete'. Build two month subsets via acquired_date masks
+(>= '2026-03-01' & < '2026-04-01') and (>= '2026-04-01' & < '2026-05-01').
+Compare across these domains (skip any not requested by the user):
+  1. confirmed_lab_substances detections -> explode pipe-separated, count distinct samples
+     (df['id'].nunique inside groupby) per substance
+  2. confirmed_lab_substances combinations -> per row, sort the substance list and
+     join with ' + ' to make a canonical combo string; count distinct samples per combo
+  3. preliminary_ftir_substances -> same as #1 but on the FTIR column
+  4. SuspectedCleaned (or suspected fallback) -> count distinct samples per cleaned suspected
+For each domain, outer-merge March vs April counts (fill missing with 0), compute
+delta = April - March, sort by abs(delta) descending, keep the top ~10 rows per domain.
+Return:
+  - answer: plain-English summary listing biggest increases, decreases, new appearances,
+    drop-offs, ALWAYS including the n samples per period
+  - metrics: {{March Samples, April Samples, Domains Compared}}
+  - table: columns [Domain, Item, Mar 2026, Apr 2026, Change]
+  - detail: state the filters used (state, status scope, period boundaries)
+For more elaborate variants of this question (involving ratios or FTIR-vs-Lab closeness),
+see the dedicated patterns below — combine them by emitting multiple sections in answer
+and one merged table per request.
+
+Question: "Closeness between FTIR and Lab Results" / "FTIR-vs-Lab agreement"
+Approach: compute per-sample Jaccard similarity between the two pipe-separated columns,
+then average across samples. The Jaccard of two sets is |A ∩ B| / |A ∪ B|.
+  def to_set(val):
+      if pd.isna(val):
+          return set()
+      return {{p.strip().lower() for p in str(val).split('|') if p.strip()}}
+  rows = []
+  for _, r in df_filtered.iterrows():
+      a, b = to_set(r.get('preliminary_ftir_substances')), to_set(r.get('confirmed_lab_substances'))
+      union = a | b
+      if not union:
+          continue
+      rows.append(len(a & b) / len(union))
+  Return metrics for {{N samples compared, Mean Jaccard, Median Jaccard}} and a one-line
+  interpretation (1.0 = identical, 0.0 = no overlap).
+
+Question: "Map of fentanyl-positive samples by state" (or any cross-state map)
+Approach: filter to the requested condition (substance present, year, etc.). Group by
+StateofOriginCleaned, count distinct samples per state with df['id'].nunique(). For the chart
+spec, emit labels as 2-LETTER USPS codes (e.g. "MA", "RI", "CT") — convert from the full state
+name in your code as a string literal, not a dict. Use scope "us_states". Add metrics for
+{{Total Samples, States Represented, Top State}}.
+
+Question: "Map of samples within Massachusetts" / "county-level map for MA"
+Approach: filter to the state (StateofOriginCleaned == 'Massachusetts') and any other criteria.
+Group by County_State, count distinct samples per county with df['id'].nunique(). Return chart
+spec with type "map", scope "us_counties", labels = the County_State strings (e.g.
+"Hampden, MA", "Berkshire, MA"), values = the counts. The renderer auto-zooms to whichever
+counties are present, so a single-state map fits naturally. Add metrics for
+{{Total Samples, Counties Represented, Top County}}. If the user explicitly asks for
+TOWN-level (not county), fall back to a TABLE keyed by TownofOriginCleaned with a "detail"
+note that town-level maps aren't supported.
+
+Question: "Substances most often seen together" / "co-occurrence pairs"
+Approach: for each row, build a sorted list of unique substances from confirmed_lab_substances,
+then enumerate all unordered pairs and count their occurrences across rows. Use itertools.combinations.
+  from itertools import combinations
+  pair_counts = {{}}
+  for val in df_filtered['confirmed_lab_substances'].fillna('').astype(str):
+      subs = sorted({{s.strip() for s in val.split('|') if s.strip()}})
+      for a, b in combinations(subs, 2):
+          key = f'{{a}} + {{b}}'
+          pair_counts[key] = pair_counts.get(key, 0) + 1
+  Return as a list (top 20) or a horizontal bar chart of the most common pairs.
+
 IMPORTANT EXECUTION RULES:
 - Write Python code using the DataFrame `df`, then end with: print(json.dumps(result, default=str))
 - Import json at the top of your code. You may use pandas, numpy, json, scipy.stats, sklearn.metrics,
@@ -473,11 +649,19 @@ IMPORTANT EXECUTION RULES:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 @st.cache_resource
-def get_client():
-    key = _get_secret("ANTHROPIC_API_KEY")
-    if not key or key == "your_api_key_here":
-        return None
-    return Anthropic(api_key=key)
+def get_clients():
+    """Build whichever LLM clients are configured and importable."""
+    clients = {}
+
+    anthropic_key = _get_secret("ANTHROPIC_API_KEY")
+    if Anthropic is not None and anthropic_key and anthropic_key != "your_api_key_here":
+        clients["anthropic"] = Anthropic(api_key=anthropic_key)
+
+    openai_key = _get_secret("OPENAI_API_KEY")
+    if OpenAI is not None and openai_key and openai_key != "your_api_key_here":
+        clients["openai"] = OpenAI(api_key=openai_key)
+
+    return clients
 
 
 @st.cache_data
@@ -582,6 +766,10 @@ def log_query(question: str, result: dict, df_rows: int) -> None:
             "question": question,
             "rows_in_dataset": df_rows,
             "success": result.get("_exec_error") is None,
+            "provider": result.get("_provider", ""),
+            "provider_model": result.get("_provider_model", ""),
+            "provider_attempts": result.get("_provider_attempts", []),
+            "fallback_used": bool(result.get("_provider_fallback_used")),
             "exec_ms": round(result.get("_exec_seconds", 0.0) * 1000, 1),
             "input_tokens": usage.get("input_tokens", 0),
             "output_tokens": usage.get("output_tokens", 0),
@@ -605,7 +793,7 @@ def log_query(question: str, result: dict, df_rows: int) -> None:
 
 
 # ── Generated-code cache ──────────────────────────────────────────────────────
-# Caches the Python code Claude generates per (question, prompt-signature) pair.
+# Caches the Python code the LLM generates per (question, prompt-signature) pair.
 # Lets repeat questions execute locally with no API call. Cache is loaded eagerly
 # from GitHub on first use, persisted locally, and pushed back to GitHub in the
 # background on every miss. Invisible to end users.
@@ -785,15 +973,93 @@ def _exec_generated_code(raw_code: str, df: pd.DataFrame) -> tuple:
         return None, f"{type(e).__name__}: {e}", 0.0, buf.getvalue()
 
 
-def run_query(client: Anthropic, df: pd.DataFrame, question: str) -> dict:
-    """Answer a question by either reusing cached code or calling Claude.
+def _provider_order(clients: dict) -> list:
+    """Return provider order, defaulting to Anthropic first then OpenAI."""
+    configured = list(clients.keys())
+    preferred = [
+        token.strip().lower()
+        for token in (_get_secret("LLM_PROVIDER_ORDER") or "anthropic,openai").split(",")
+        if token.strip()
+    ]
+
+    ordered = []
+    for provider in preferred + configured:
+        if provider in clients and provider not in ordered:
+            ordered.append(provider)
+    return ordered
+
+
+def _clean_model_output(text: str) -> str:
+    """Strip common markdown code fences from model output."""
+    return re.sub(r"^```[\w]*\n?", "", str(text).strip()).rstrip("`").strip()
+
+
+def _anthropic_usage_dict(usage) -> dict:
+    return {
+        "input_tokens": getattr(usage, "input_tokens", 0),
+        "output_tokens": getattr(usage, "output_tokens", 0),
+        "cache_creation": getattr(usage, "cache_creation_input_tokens", 0),
+        "cache_read": getattr(usage, "cache_read_input_tokens", 0),
+    }
+
+
+def _call_anthropic(client, system: str, question: str) -> dict:
+    model = _get_secret("ANTHROPIC_MODEL") or "claude-haiku-4-5-20251001"
+    max_tokens = int(_get_secret("LLM_MAX_OUTPUT_TOKENS") or "8192")
+    response = client.messages.create(
+        model=model,
+        max_tokens=max_tokens,
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": question}],
+    )
+    return {
+        "provider": "anthropic",
+        "model": model,
+        "usage": _anthropic_usage_dict(response.usage),
+        "raw_code": _clean_model_output(response.content[0].text),
+    }
+
+
+def _openai_usage_dict(usage) -> dict:
+    return {
+        "input_tokens": getattr(usage, "prompt_tokens", 0),
+        "output_tokens": getattr(usage, "completion_tokens", 0),
+        "cache_creation": 0,
+        "cache_read": 0,
+    }
+
+
+def _call_openai(client, system: str, question: str) -> dict:
+    model = _get_secret("OPENAI_MODEL") or "gpt-4o-mini"
+    max_tokens = int(_get_secret("LLM_MAX_OUTPUT_TOKENS") or "8192")
+    response = client.chat.completions.create(
+        model=model,
+        temperature=0,
+        max_tokens=max_tokens,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": question},
+        ],
+    )
+    content = response.choices[0].message.content or ""
+    return {
+        "provider": "openai",
+        "model": model,
+        "usage": _openai_usage_dict(response.usage),
+        "raw_code": _clean_model_output(content),
+    }
+
+
+def run_query(clients: dict, df: pd.DataFrame, question: str) -> dict:
+    """Answer a question by either reusing cached code or calling a configured LLM.
 
     Cache flow (invisible to the user):
       1. Hash (normalized question + prompt signature) -> key.
       2. If key in cache: execute the stored Python locally. On success, bump
          hit_count, persist, push to GitHub in background, return result.
-      3. On miss OR cached-code execution error: call the Anthropic API,
-         execute the fresh code, store it under the same key on success.
+      3. On miss OR cached-code execution error: call Anthropic and/or OpenAI,
+         retrying the other provider if the first one errors or returns bad code,
+         then store the successful code under the same key.
 
     The returned dict shape is identical regardless of cache path:
       _usage, _code, _stdout, _exec_seconds, _exec_error
@@ -830,6 +1096,10 @@ def run_query(client: Anthropic, df: pd.DataFrame, question: str) -> dict:
             result["_exec_seconds"] = exec_seconds
             result["_exec_error"] = None
             result["_from_cache"] = True
+            result["_provider"] = cached_entry.get("provider", "cache")
+            result["_provider_model"] = cached_entry.get("provider_model", "")
+            result["_provider_attempts"] = [{"provider": "cache", "status": "hit"}]
+            result["_provider_fallback_used"] = False
             return result
         # Cached code failed — drop it and fall through to API.
         cache.pop(key, None)
@@ -839,22 +1109,78 @@ def run_query(client: Anthropic, df: pd.DataFrame, question: str) -> dict:
     system = SYSTEM_PROMPT_TEMPLATE.format(
         total=len(df), complete=len(complete), schema=SCHEMA_DESCRIPTION
     )
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=4096,
-        system=[{"type":"text","text":system,"cache_control":{"type":"ephemeral"}}],
-        messages=[{"role":"user","content":question}],
-    )
-    usage = response.usage
-    raw = re.sub(r"^```[\w]*\n?","",response.content[0].text.strip()).rstrip("`").strip()
+    provider_errors = []
+    provider_attempts = []
+    successful_llm = None
+    raw = ""
+    stdout = ""
+    exec_seconds = 0.0
+    exec_error = None
+    result = None
 
-    result, exec_error, exec_seconds, stdout = _exec_generated_code(raw, df)
-    if result is None:
-        # Build an error result that matches the historical shape
+    for provider in _provider_order(clients):
+        try:
+            if provider == "anthropic":
+                llm_result = _call_anthropic(clients[provider], system, question)
+            elif provider == "openai":
+                llm_result = _call_openai(clients[provider], system, question)
+            else:
+                continue
+        except Exception as e:
+            message = f"{provider}: {type(e).__name__}: {e}"
+            provider_errors.append(message)
+            provider_attempts.append({"provider": provider, "status": "api_error", "message": message})
+            continue
+
+        raw = llm_result["raw_code"]
+        result, exec_error, exec_seconds, stdout = _exec_generated_code(raw, df)
+        if exec_error is None and result is not None:
+            successful_llm = llm_result
+            provider_attempts.append({
+                "provider": provider,
+                "status": "ok",
+                "model": llm_result["model"],
+            })
+            break
+
+        message = f"{provider}: generated code failed ({exec_error})"
+        provider_errors.append(message)
+        provider_attempts.append({
+            "provider": provider,
+            "status": "code_error",
+            "model": llm_result["model"],
+            "message": exec_error,
+        })
+        result = None
+
+    if successful_llm is None:
+        joined_errors = "; ".join(provider_errors) or "No configured provider succeeded."
         if exec_error and exec_error.startswith("Invalid JSON"):
-            result = {"answer": f"Analysis returned invalid JSON. Raw output: {stdout.strip()[:500]}"}
+            result = {
+                "answer": f"All configured providers failed. Last output was invalid JSON.",
+                "detail": f"{joined_errors} Raw output: {stdout.strip()[:500]}",
+            }
         else:
-            result = {"answer": f"Error executing analysis: {exec_error}", "detail": raw[:500]}
+            result = {
+                "answer": "All configured providers failed to complete the analysis.",
+                "detail": f"{joined_errors} Raw output: {raw[:500]}",
+            }
+        result["_usage"] = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation": 0,
+            "cache_read": 0,
+        }
+        result["_code"] = raw
+        result["_stdout"] = stdout
+        result["_exec_seconds"] = exec_seconds
+        result["_exec_error"] = exec_error or joined_errors
+        result["_from_cache"] = False
+        result["_provider"] = ""
+        result["_provider_model"] = ""
+        result["_provider_attempts"] = provider_attempts
+        result["_provider_fallback_used"] = len(provider_attempts) > 1
+        return result
 
     # ── 3. Save to cache on clean success ─────────────────────────────────
     if exec_error is None:
@@ -866,24 +1192,60 @@ def run_query(client: Anthropic, df: pd.DataFrame, question: str) -> dict:
             "last_used": now_iso,
             "hit_count": 1,
             "prompt_signature": signature,
+            "provider": successful_llm["provider"],
+            "provider_model": successful_llm["model"],
         }
         _save_cache_local(cache)
         threading.Thread(
             target=_github_cache_push, args=(dict(cache),), daemon=True,
         ).start()
 
-    result["_usage"] = {
-        "input_tokens":  usage.input_tokens,
-        "output_tokens": usage.output_tokens,
-        "cache_creation": getattr(usage,"cache_creation_input_tokens",0),
-        "cache_read":     getattr(usage,"cache_read_input_tokens",0),
-    }
+    result["_usage"] = successful_llm["usage"]
     result["_code"] = raw
     result["_stdout"] = stdout
     result["_exec_seconds"] = exec_seconds
     result["_exec_error"] = exec_error
     result["_from_cache"] = False
+    result["_provider"] = successful_llm["provider"]
+    result["_provider_model"] = successful_llm["model"]
+    result["_provider_attempts"] = provider_attempts
+    result["_provider_fallback_used"] = len(provider_attempts) > 1
     return result
+
+
+# ── US counties GeoJSON loader (cached) ──────────────────────────────────────
+@st.cache_data(show_spinner=False, ttl=24 * 3600)
+def _load_us_counties_geojson_and_lookup():
+    """Fetch the standard US-counties GeoJSON once and build a name -> FIPS lookup.
+
+    Returns (geojson_or_None, lookup_dict). Lookup keys are normalized as
+    "<county_name>, <state_code>" lowercased — accepting either "Hampden, MA"
+    or "Hampden County, MA" forms (both variants pre-populated). On any
+    failure, returns (None, {}) and the renderer falls back gracefully.
+    """
+    from urllib.request import urlopen
+    url = "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json"
+    try:
+        with urlopen(url, timeout=15) as r:
+            geo = json.load(r)
+    except Exception:
+        return None, {}
+    lookup = {}
+    for feat in geo.get("features", []):
+        fips = str(feat.get("id") or "")
+        if len(fips) != 5:
+            continue
+        state_code = _STATE_FIPS_TO_CODE.get(fips[:2])
+        if not state_code:
+            continue
+        name = (feat.get("properties") or {}).get("NAME") or ""
+        name = name.strip()
+        if not name:
+            continue
+        # Pre-populate both "Hampden, MA" and "Hampden County, MA" variants
+        for variant in (f"{name}, {state_code}", f"{name} County, {state_code}"):
+            lookup[variant.lower()] = fips
+    return geo, lookup
 
 
 def make_chart(spec: dict) -> go.Figure:
@@ -943,6 +1305,122 @@ def make_chart(spec: dict) -> go.Figure:
             textinfo="label+percent", textfont_size=13,
         )
         fig.update_layout(**layout_base)
+
+    elif chart_type == "map":
+        scope = (spec.get("scope") or "us_states").lower()
+        teal_scale = [
+            [0.0, "#E6F4F3"], [0.25, "#B7DBD7"], [0.5, "#6CB4AE"],
+            [0.75, "#26928A"], [1.0, COLORS["teal"]],
+        ]
+        # Defensive: model sometimes passes colorscale=True (a bool) by mistake,
+        # confusing it with bar/pie's "colors: true|false" property. Only accept
+        # a non-empty list (custom scale) or a non-empty string (Plotly named scale).
+        cs_raw = spec.get("colorscale")
+        if (isinstance(cs_raw, list) and cs_raw) or (isinstance(cs_raw, str) and cs_raw.strip()):
+            chosen_colorscale = cs_raw
+        else:
+            chosen_colorscale = teal_scale
+
+        if scope == "us_states":
+            # The model emits 2-letter USPS codes directly (e.g. "MA", "RI").
+            # Anything else gets uppercased — most likely already a code.
+            codes = [str(r).strip().upper() for r in labels]
+            fig = go.Figure(go.Choropleth(
+                locations=codes,
+                z=values,
+                locationmode="USA-states",
+                colorscale=chosen_colorscale,
+                colorbar=dict(title=label or "Value", thickness=15, len=0.7),
+                marker_line_color="white",
+                marker_line_width=0.6,
+                zmin=min(values) if values else 0,
+                zmax=max(values) if values else 1,
+            ))
+            fig.update_layout(
+                margin=dict(l=0, r=0, t=40, b=0),
+                height=460,
+                paper_bgcolor="white",
+                geo=dict(
+                    scope="usa",
+                    projection_type="albers usa",
+                    showlakes=False,
+                    bgcolor="rgba(0,0,0,0)",
+                    lakecolor="white",
+                    landcolor="#F5F7F9",
+                    subunitcolor="white",
+                ),
+                font=dict(family="Inter, sans-serif", color=COLORS["navy"], size=12),
+            )
+
+        elif scope == "us_counties":
+            # The model emits "County, ST" labels (matching the County_State column).
+            # We translate to 5-digit FIPS via a runtime lookup built from the GeoJSON.
+            geo, lookup = _load_us_counties_geojson_and_lookup()
+            if geo is None:
+                fig = go.Figure()
+                fig.add_annotation(
+                    text="County map unavailable (could not load county boundaries).",
+                    showarrow=False, font=dict(size=14, color=COLORS["navy"]),
+                )
+                fig.update_layout(height=240, paper_bgcolor="white")
+            else:
+                # Step 1 — resolve user-provided labels to FIPS, track which state(s)
+                # the data covers so we can pad missing counties with zeros.
+                provided = {}                 # fips -> numeric value
+                relevant_state_codes = set()  # 2-letter codes (e.g. "MA")
+                for raw, v in zip(labels, values):
+                    key = str(raw).strip().lower()
+                    fips = lookup.get(key)
+                    if fips:
+                        provided[fips] = v
+                        sc = _STATE_FIPS_TO_CODE.get(fips[:2])
+                        if sc:
+                            relevant_state_codes.add(sc)
+                # Step 2 — pad with value=0 for every other county in those states,
+                # so the full state outline renders instead of just the matched counties.
+                for feat in geo.get("features", []):
+                    feat_fips = str(feat.get("id") or "")
+                    if len(feat_fips) != 5 or feat_fips in provided:
+                        continue
+                    feat_state_code = _STATE_FIPS_TO_CODE.get(feat_fips[:2])
+                    if feat_state_code in relevant_state_codes:
+                        provided[feat_fips] = 0
+                fips_codes = list(provided.keys())
+                paired_values = [provided[f] for f in fips_codes]
+                # Lock the colorbar to the data's actual range, ignoring the zero pads
+                # so the gradient maps from real-min to real-max (zeros render as the
+                # lightest tone, but the scale isn't compressed by them).
+                non_zero = [v for v in paired_values if v > 0]
+                z_min = min(non_zero) if non_zero else 0
+                z_max = max(non_zero) if non_zero else 1
+                fig = go.Figure(go.Choropleth(
+                    geojson=geo,
+                    locations=fips_codes,
+                    z=paired_values,
+                    colorscale=chosen_colorscale,
+                    colorbar=dict(title=label or "Value", thickness=15, len=0.7),
+                    marker_line_color="white",
+                    marker_line_width=0.4,
+                    zmin=0,
+                    zmax=z_max,
+                ))
+                fig.update_layout(
+                    margin=dict(l=0, r=0, t=40, b=0),
+                    height=520,
+                    paper_bgcolor="white",
+                    font=dict(family="Inter, sans-serif", color=COLORS["navy"], size=12),
+                )
+                # Auto-zoom to whichever counties are in the data (e.g., just MA)
+                fig.update_geos(
+                    scope="usa",
+                    visible=False,
+                    fitbounds="locations",
+                    bgcolor="rgba(0,0,0,0)",
+                    landcolor="#F5F7F9",
+                    subunitcolor="white",
+                )
+        else:
+            fig = go.Figure()  # unknown map scope — render empty
 
     else:
         fig = go.Figure()
@@ -1181,10 +1659,10 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ── Guards ────────────────────────────────────────────────────────────────────
-client = get_client()
-if client is None:
-    st.error("⚠️  No API key found. Add your Anthropic API key to the `.env` file.")
-    st.code("ANTHROPIC_API_KEY=sk-ant-api03-...")
+clients = get_clients()
+if not clients:
+    st.error("⚠️  No API key found. Add your Anthropic and/or OpenAI API key to the `.env` file.")
+    st.code("ANTHROPIC_API_KEY=sk-ant-api03-...\nOPENAI_API_KEY=sk-proj-...")
     st.stop()
 
 if uploaded is None:
@@ -1287,7 +1765,7 @@ with ask_col:
 pending_question = st.session_state.pop("_pending_question", None)
 if pending_question:
     with st.spinner("Analyzing..."):
-        result = run_query(client, df, pending_question)
+        result = run_query(clients, df, pending_question)
     log_query(pending_question, result, df_rows=len(df))
     if "history" not in st.session_state:
         st.session_state["history"] = []

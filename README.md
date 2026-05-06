@@ -22,13 +22,18 @@ source venv/bin/activate        # Mac / Linux
 pip install -r requirements.txt
 ```
 
-**4. Add your API key**
+**4. Add your API keys**
 
 Open `.env` and replace the placeholder:
 ```
 ANTHROPIC_API_KEY=sk-ant-api03-...your key here...
+OPENAI_API_KEY=sk-proj-...your key here...
 ```
-Your key is at https://console.anthropic.com/keys
+The app will try Anthropic first by default and automatically fall back to OpenAI if the first
+provider errors or returns unusable code. You can change the order with:
+```
+LLM_PROVIDER_ORDER=anthropic,openai
+```
 
 ---
 
@@ -80,10 +85,9 @@ drug-query-streamlit/
 
 ## Cost
 
-Uses Claude Haiku 4.5 with prompt caching.
-- First question per session: ~$0.002
-- Subsequent questions (cache hit): ~$0.0015
-- Typical monthly cost for moderate use: under $1.00
+Uses Anthropic and/or OpenAI depending on availability and fallback.
+- Cached repeat questions still avoid a new model call
+- Cost depends on which provider answers the question
 
 ---
 
