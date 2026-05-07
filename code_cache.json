@@ -708,5 +708,15 @@
     "prompt_signature": "1980d8e865cf",
     "provider": "anthropic",
     "provider_model": "claude-haiku-4-5-20251001"
+  },
+  "06642157672d3a8f": {
+    "code": "import pandas as pd\nimport json\n\n# Define a helper function to count unique samples\ncount_col = 'id' if 'id' in df.columns else None\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\n# Filter for complete data\ndf_complete = df[df['status'] == 'Complete']\n\n# Define the two time periods\nperiod_1 = df_complete[(df_complete['acquired_date'] >= '2025-10-01') & (df_complete['acquired_date'] < '2026-01-01')]\nperiod_2 = df_complete[(df_complete['acquired_date'] >= '2026-02-01') & (df_complete['acquired_date'] < '2026-06-01')]\n\n# Function to get top N active drugs\ndef get_top_active_drugs(df, n=10):\n    active_cuts = df['ActiveCuts'].fillna('').str.split(',').explode().str.strip()\n    active_counts = active_cuts.value_counts()\n    return active_counts.head(n)\n\n# Get top active drugs for both periods\ntop_active_drugs_period_1 = get_top_active_drugs(period_1)\ntop_active_drugs_period_2 = get_top_active_drugs(period_2)\n\n# Combine results into a DataFrame for comparison\ncomparison_df = pd.DataFrame({\n    'Period 1': top_active_drugs_period_1,\n    'Period 2': top_active_drugs_period_2\n}).fillna(0)\n\n# Calculate proportions\ncomparison_df['Total Samples Period 1'] = n_samples(period_1)\ncomparison_df['Total Samples Period 2'] = n_samples(period_2)\ncomparison_df['Proportion Period 1'] = comparison_df['Period 1'] / comparison_df['Total Samples Period 1']\ncomparison_df['Proportion Period 2'] = comparison_df['Period 2'] / comparison_df['Total Samples Period 2']\n\n# Prepare the result\nresult = {\n    \"answer\": f\"Comparison of top 10 active drugs detected in Massachusetts shows changes in proportions from October-December 2025 to February-May 2026.\",\n    \"metrics\": [\n        {\"label\": \"Total Samples Period 1\", \"value\": n_samples(period_1)},\n        {\"label\": \"Total Samples Period 2\", \"value\": n_samples(period_2)}\n    ],\n    \"table\": {\n        \"headers\": [\"Active Drug\", \"Count Period 1\", \"Count Period 2\", \"Proportion Period 1\", \"Proportion Period 2\"],\n        \"rows\": comparison_df.reset_index().values.tolist()\n    },\n    \"detail\": \"Data filtered for Massachusetts and complete status across specified periods.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "compare the top 10 active drugs detected as a proportion of all drugs tested in Massachusetts in February to May 2026 compared to the period from October to December 2025.",
+    "first_seen": "2026-05-07T14:16:06+00:00",
+    "last_used": "2026-05-07T14:16:06+00:00",
+    "hit_count": 1,
+    "prompt_signature": "1980d8e865cf",
+    "provider": "openai",
+    "provider_model": "gpt-4o-mini"
   }
 }
