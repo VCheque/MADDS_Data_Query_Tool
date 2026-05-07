@@ -998,5 +998,15 @@
     "prompt_signature": "1980d8e865cf",
     "provider": "anthropic",
     "provider_model": "claude-haiku-4-5-20251001"
+  },
+  "0466ce46950d330f": {
+    "code": "import json\nimport pandas as pd\n\n# Filter to Complete status, 2024, Rhode Island\ndf_filtered = df[\n    (df['status'] == 'Complete') &\n    (df['acquired_date'].dt.year == 2024) &\n    (df['StateofOriginCleaned'].str.lower() == 'rhode island')\n].copy()\n\n# Count distinct samples\ntotal_samples = df_filtered['id'].nunique()\n\n# Parse ActiveCuts: comma-separated, may include \"None Detected\"\ncuts_list = []\nfor val in df_filtered['ActiveCuts'].fillna('').astype(str):\n    if val.strip():\n        parts = [p.strip() for p in val.split(',')]\n        cuts_list.extend(parts)\n\n# Count occurrences, excluding \"None Detected\" and empty strings\nfrom collections import Counter\ncut_counts = Counter([c for c in cuts_list if c and c.lower() != 'none detected'])\n\n# Get top 10\ntop_10 = cut_counts.most_common(10)\nlabels = [cut for cut, _ in top_10]\nvalues = [int(count) for _, count in top_10]\n\nresult = {\n    \"answer\": f\"In 2024, Rhode Island had {total_samples} complete samples. The top 10 active cuts detected were led by {labels[0]} ({values[0]} samples), followed by {labels[1]} ({values[1]} samples) and {labels[2]} ({values[2]} samples). Other frequent cuts included {', '.join([f'{l} ({v})' for l, v in zip(labels[3:6], values[3:6])])}.\",\n    \"metrics\": [\n        {\"label\": \"Samples (RI, 2024)\", \"value\": total_samples},\n        {\"label\": \"Top Cut\", \"value\": f\"{labels[0]} ({values[0]})\"},\n        {\"label\": \"Distinct Cuts Detected\", \"value\": len(cut_counts)}\n    ],\n    \"chart\": {\n        \"type\": \"bar\",\n        \"labels\": labels,\n        \"values\": values,\n        \"label\": \"Sample Count\",\n        \"colors\": False\n    },\n    \"detail\": \"Counts each cut once per sample where detected. Excludes 'None Detected'. Rhode Island filtered via StateofOriginCleaned.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Bar chart of top 10 active cuts in 2024 in Rhode island",
+    "first_seen": "2026-05-07T18:39:48+00:00",
+    "last_used": "2026-05-07T18:39:48+00:00",
+    "hit_count": 1,
+    "prompt_signature": "1980d8e865cf",
+    "provider": "anthropic",
+    "provider_model": "claude-haiku-4-5-20251001"
   }
 }
