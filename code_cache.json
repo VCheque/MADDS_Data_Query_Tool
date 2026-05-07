@@ -798,5 +798,15 @@
     "prompt_signature": "1980d8e865cf",
     "provider": "anthropic",
     "provider_model": "claude-haiku-4-5-20251001"
+  },
+  "c2851db27dc64c57": {
+    "code": "import json\nimport pandas as pd\n\n# Filter to Complete status\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Helper for counting distinct samples\ncount_col = 'id' if 'id' in df_complete.columns else None\n\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\n# Filter to Massachusetts\ndf_ma = df_complete[df_complete['StateofOriginCleaned'].str.lower() == 'massachusetts']\n\n# Search for nitazene in confirmed_lab_substances, ActiveCuts, and preliminary_ftir_substances\nm1 = df_ma['confirmed_lab_substances'].fillna('').str.contains('nitazene', case=False, na=False)\nm2 = df_ma['ActiveCuts'].fillna('').str.contains('nitazene', case=False, na=False)\nm3 = df_ma['preliminary_ftir_substances'].fillna('').str.contains('nitazene', case=False, na=False)\ndf_nitazene = df_ma[m1 | m2 | m3].copy()\n\n# Add year column\ndf_nitazene['year'] = df_nitazene['acquired_date'].dt.year\n\n# Count by year\ncounts_by_year = df_nitazene.groupby('year')['id'].nunique().to_dict()\n\ncount_2025 = counts_by_year.get(2025, 0)\ncount_2026 = counts_by_year.get(2026, 0)\n\n# Build result\nresult = {\n    \"answer\": f\"In Massachusetts, {count_2025} nitazene samples were detected in 2025 and {count_2026} samples in 2026. Total: {count_2025 + count_2026} distinct nitazene-positive samples across both years from the Complete dataset.\",\n    \"metrics\": [\n        {\"label\": \"Nitazene Samples (2025)\", \"value\": int(count_2025)},\n        {\"label\": \"Nitazene Samples (2026)\", \"value\": int(count_2026)},\n        {\"label\": \"Total (2025–2026)\", \"value\": int(count_2025 + count_2026)}\n    ],\n    \"detail\": \"Filtered to Massachusetts, status='Complete', acquired_date years 2025–2026. Searched for 'nitazene' (case-insensitive) across confirmed_lab_substances, ActiveCuts, and preliminary_ftir_substances. Counted distinct sample IDs per year.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "how many nitazene samples have been detected in Massachusetts in 2025 and in 2026?",
+    "first_seen": "2026-05-07T14:39:03+00:00",
+    "last_used": "2026-05-07T14:39:03+00:00",
+    "hit_count": 1,
+    "prompt_signature": "1980d8e865cf",
+    "provider": "anthropic",
+    "provider_model": "claude-haiku-4-5-20251001"
   }
 }
