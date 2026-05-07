@@ -968,5 +968,15 @@
     "prompt_signature": "1980d8e865cf",
     "provider": "anthropic",
     "provider_model": "claude-haiku-4-5-20251001"
+  },
+  "461ead1d504bb5ca": {
+    "code": "import json\nimport pandas as pd\nimport numpy as np\n\n# Filter to Complete status, Massachusetts, and 2022-2026\ndf_complete = df[df['status'] == 'Complete']\ndf_ma = df_complete[df_complete['StateofOriginCleaned'].str.lower() == 'massachusetts']\ndf_ma = df_ma[(df_ma['acquired_date'].dt.year >= 2022) & (df_ma['acquired_date'].dt.year <= 2026)]\n\n# Group by year\nyearly_data = []\nfor year in range(2022, 2027):\n    df_year = df_ma[df_ma['acquired_date'].dt.year == year]\n    if len(df_year) == 0:\n        continue\n    \n    total_samples = df_year['id'].nunique()\n    \n    # Count samples containing levamisole in preliminary_ftir_substances\n    levamisole_mask = df_year['preliminary_ftir_substances'].fillna('').str.contains('levamisole', case=False, na=False)\n    levamisole_samples = df_year[levamisole_mask]['id'].nunique()\n    \n    percent = (levamisole_samples / total_samples * 100) if total_samples > 0 else 0\n    yearly_data.append({\n        'year': year,\n        'total_samples': total_samples,\n        'levamisole_samples': levamisole_samples,\n        'percent': round(percent, 1)\n    })\n\n# Prepare chart data\nlabels = [str(row['year']) for row in yearly_data]\nvalues = [row['percent'] for row in yearly_data]\n\n# Calculate overall statistics\ntotal_all_years = sum(row['total_samples'] for row in yearly_data)\ntotal_levamisole = sum(row['levamisole_samples'] for row in yearly_data)\noverall_percent = round(total_levamisole / total_all_years * 100, 1) if total_all_years > 0 else 0\n\nresult = {\n    \"answer\": f\"In Massachusetts from 2022 to 2026, levamisole was detected in preliminary FTIR results in {total_levamisole} samples out of {total_all_years} tested (overall {overall_percent}%). The yearly percentages ranged from {min(values):.1f}% to {max(values):.1f}%.\",\n    \"metrics\": [\n        {\"label\": \"Total Samples (2022-2026)\", \"value\": total_all_years},\n        {\"label\": \"Levamisole Detections\", \"value\": total_levamisole},\n        {\"label\": \"Overall Percent\", \"value\": f\"{overall_percent}%\"}\n    ],\n    \"chart\": {\n        \"type\": \"line\",\n        \"labels\": labels,\n        \"values\": [float(v) for v in values],\n        \"label\": \"% Levamisole (FTIR)\"\n    },\n    \"detail\": \"Filtered to Complete status, Massachusetts origin, preliminary_ftir_substances column. Percent calculated as distinct samples containing levamisole / distinct samples tested per year.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "Using the column preliminary_ftir_substances, make a line graph of the percent of samples containing levamisole in Massachusetts from 2022 to 2026 as a percent of samples tested?",
+    "first_seen": "2026-05-07T15:07:37+00:00",
+    "last_used": "2026-05-07T15:07:37+00:00",
+    "hit_count": 1,
+    "prompt_signature": "1980d8e865cf",
+    "provider": "anthropic",
+    "provider_model": "claude-haiku-4-5-20251001"
   }
 }
