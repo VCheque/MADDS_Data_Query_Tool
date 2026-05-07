@@ -1003,6 +1003,59 @@ def _anthropic_usage_dict(usage) -> dict:
     }
 
 
+# Common substance names we expect to see in multi-series questions. Used as a
+# count-3-or-more heuristic so we know to nudge the model toward the multi-series
+# chart format.
+_KNOWN_SUBSTANCE_NAMES = (
+    "fentanyl", "cocaine", "methamphetamine", "heroin", "xylazine", "medetomidine",
+    "btmps", "lidocaine", "caffeine", "phenacetin", "levamisole", "acetaminophen",
+    "diphenhydramine", "ketamine", "mdma", "amphetamine", "oxycodone", "tramadol",
+    "diazepam", "clonazolam", "carfentanil", "acetylfentanyl", "parafluorofentanyl",
+    "4-anpp", "kratom", "mitragynine",
+)
+_MULTI_SERIES_HINTS = (
+    "lines for", "each drug", "each substance", "different colors", "separate lines",
+    "one line per", "one per", "compare", "5 lines", "multiple lines", "side by side",
+    "each one", "for each", "by drug", "by substance",
+)
+_CHART_WORDS = ("chart", "plot", "line", "bar", "graph", "visual", "trend", "over time")
+
+
+def _augment_question_for_multi_series(question: str) -> str:
+    """Detect multi-series chart intent and append a per-question format hint.
+
+    Conservative heuristic — only fires when the question clearly asks for
+    multiple drugs / substances on a single chart. The hint lives in the USER
+    message, not the system prompt, so the prompt signature stays unchanged
+    and existing cache entries remain valid.
+    """
+    q = question.lower()
+    has_chart_word = any(w in q for w in _CHART_WORDS)
+    if not has_chart_word:
+        return question
+    has_multi_phrase = any(p in q for p in _MULTI_SERIES_HINTS)
+    substance_count = sum(1 for s in _KNOWN_SUBSTANCE_NAMES if s in q)
+    if not (has_multi_phrase or substance_count >= 3):
+        return question
+    hint = (
+        "\n\n[CHART HINT — do not echo this in the answer]: this question asks for "
+        "MULTIPLE series on a single line/bar chart. Use the multi-series chart shape:\n"
+        '  "chart": {\n'
+        '    "type": "line",            // or "bar"\n'
+        '    "labels": [...],           // shared x-axis (e.g. years, months)\n'
+        '    "series": [\n'
+        '      {"label": "Fentanyl",     "values": [...]},\n'
+        '      {"label": "Cocaine",      "values": [...]},\n'
+        '      {"label": "Xylazine",     "values": [...]}\n'
+        '    ]\n'
+        "  }\n"
+        "Each series['values'] must have the SAME LENGTH as labels. The renderer "
+        "will draw one line/bar group per series with distinct colors automatically. "
+        "Do NOT use the single-series 'values' field for this question."
+    )
+    return question + hint
+
+
 def _call_anthropic(client, system: str, question: str) -> dict:
     model = _get_secret("ANTHROPIC_MODEL") or "claude-haiku-4-5-20251001"
     max_tokens = int(_get_secret("LLM_MAX_OUTPUT_TOKENS") or "8192")
@@ -1010,7 +1063,7 @@ def _call_anthropic(client, system: str, question: str) -> dict:
         model=model,
         max_tokens=max_tokens,
         system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": question}],
+        messages=[{"role": "user", "content": _augment_question_for_multi_series(question)}],
     )
     return {
         "provider": "anthropic",
@@ -1038,7 +1091,7 @@ def _call_openai(client, system: str, question: str) -> dict:
         max_tokens=max_tokens,
         messages=[
             {"role": "system", "content": system},
-            {"role": "user", "content": question},
+            {"role": "user", "content": _augment_question_for_multi_series(question)},
         ],
     )
     content = response.choices[0].message.content or ""
@@ -1248,6 +1301,40 @@ def _load_us_counties_geojson_and_lookup():
     return geo, lookup
 
 
+def _normalize_series(spec: dict) -> list:
+    """Return a list of {'label', 'values'} dicts from any of the multi-series shapes
+    the model might emit, or [] if the spec is a plain single-series chart.
+
+    Accepted shapes:
+      spec['series'] = [{'label': 'Fentanyl', 'values': [...]}, ...]
+      spec['series'] = [{'name':  'Fentanyl', 'values': [...]}, ...]   # alt key
+      spec['values'] = {'Fentanyl': [...], 'Cocaine': [...]}           # dict-of-lists
+      spec['values'] = [[...], [...], ...]    # list-of-lists with optional spec['names']
+    """
+    raw = spec.get("series")
+    if isinstance(raw, list) and raw and all(isinstance(s, dict) for s in raw):
+        out = []
+        for s in raw:
+            lbl = s.get("label") or s.get("name") or s.get("title") or ""
+            vals = s.get("values") or s.get("data") or []
+            if isinstance(vals, list):
+                out.append({"label": str(lbl), "values": vals})
+        return out
+    vals = spec.get("values")
+    if isinstance(vals, dict) and vals:
+        return [{"label": str(k), "values": list(v) if isinstance(v, list) else []}
+                for k, v in vals.items()]
+    if (isinstance(vals, list) and vals
+            and all(isinstance(v, list) for v in vals)):
+        names = spec.get("names") or spec.get("labels_series") or []
+        return [
+            {"label": str(names[i]) if i < len(names) else f"Series {i+1}",
+             "values": vals[i]}
+            for i in range(len(vals))
+        ]
+    return []
+
+
 def make_chart(spec: dict) -> go.Figure:
     """Build a Plotly figure from a chart spec dict."""
     chart_type = spec.get("type","bar")
@@ -1265,7 +1352,69 @@ def make_chart(spec: dict) -> go.Figure:
     )
     axis_tickfont = dict(color=COLORS["navy"], size=12)
 
-    if chart_type == "bar":
+    # Try multi-series first for line/bar charts; fall back to single-series rendering
+    series = _normalize_series(spec) if chart_type in ("line", "bar") else []
+
+    # Categorical x-axis prevents Plotly from interpolating numeric labels (e.g. years
+    # like 2022, 2023) into half-ticks (2022.5, 2023.5). Each label is treated as a
+    # discrete category. Applied uniformly to all line/bar paths for consistent ticks.
+    cat_xaxis = dict(
+        type="category",
+        tickangle=-30,
+        showgrid=False,
+        linecolor=COLORS["border"],
+        tickfont=axis_tickfont,
+    )
+    # Vertical legend pinned to the right of the plot area so it acts as a stable
+    # reference panel for the user. Wider right margin makes room for it.
+    series_legend = dict(
+        orientation="v",
+        yanchor="top", y=1.0,
+        xanchor="left", x=1.02,
+        bgcolor="rgba(255,255,255,0.95)",
+        bordercolor=COLORS["border"],
+        borderwidth=1,
+        font=dict(family="Inter, sans-serif", color=COLORS["navy"], size=12),
+        title=dict(text="Series", font=dict(size=11, color=COLORS["muted"])),
+    )
+    series_layout_base = {**layout_base, "margin": dict(l=70, r=180, t=40, b=80)}
+
+    if chart_type == "bar" and series:
+        fig = go.Figure()
+        for i, s in enumerate(series):
+            color = CAT_COLORS[i % len(CAT_COLORS)]
+            fig.add_bar(
+                x=labels, y=s["values"], name=s["label"],
+                marker_color=color, marker_line_width=0,
+            )
+        fig.update_layout(
+            **series_layout_base,
+            barmode="group",
+            xaxis=cat_xaxis,
+            yaxis=dict(gridcolor=COLORS["border"], linecolor=COLORS["border"], tickfont=axis_tickfont),
+            showlegend=True,
+            legend=series_legend,
+        )
+
+    elif chart_type == "line" and series:
+        fig = go.Figure()
+        for i, s in enumerate(series):
+            color = CAT_COLORS[i % len(CAT_COLORS)]
+            fig.add_scatter(
+                x=labels, y=s["values"], name=s["label"],
+                mode="lines+markers",
+                line_color=color, line_width=2.5,
+                marker_color=color, marker_size=6,
+            )
+        fig.update_layout(
+            **series_layout_base,
+            xaxis=cat_xaxis,
+            yaxis=dict(gridcolor=COLORS["border"], linecolor=COLORS["border"], tickfont=axis_tickfont),
+            showlegend=True,
+            legend=series_legend,
+        )
+
+    elif chart_type == "bar":
         bar_colors = (
             [CAT_COLORS[i % len(CAT_COLORS)] for i in range(len(labels))]
             if use_colors else [COLORS["teal"]] * len(labels)
@@ -1277,7 +1426,7 @@ def make_chart(spec: dict) -> go.Figure:
         )
         fig.update_layout(
             **layout_base,
-            xaxis=dict(tickangle=-30, showgrid=False, linecolor=COLORS["border"], tickfont=axis_tickfont),
+            xaxis=cat_xaxis,
             yaxis=dict(gridcolor=COLORS["border"], linecolor=COLORS["border"], tickfont=axis_tickfont),
             showlegend=False,
         )
@@ -1292,7 +1441,7 @@ def make_chart(spec: dict) -> go.Figure:
         )
         fig.update_layout(
             **layout_base,
-            xaxis=dict(tickangle=-30, showgrid=False, linecolor=COLORS["border"], tickfont=axis_tickfont),
+            xaxis=cat_xaxis,
             yaxis=dict(gridcolor=COLORS["border"], linecolor=COLORS["border"], tickfont=axis_tickfont),
         )
 
@@ -1803,12 +1952,23 @@ if st.session_state.get("history"):
         chart_spec = result.get("chart") or {}
         chart_labels = chart_spec.get("labels") or []
         chart_values = chart_spec.get("values") or []
-        chart_renderable = (
-            chart_spec
-            and chart_labels
-            and chart_values
+        # Multi-series check: if the spec has a usable `series` array (or values is a
+        # dict / list-of-lists), render those instead. _normalize_series tolerates
+        # several shapes the model might emit.
+        normalized_series = _normalize_series(chart_spec) if chart_spec.get("type") in ("line","bar") else []
+        multi_series_ok = (
+            bool(normalized_series)
+            and bool(chart_labels)
+            and all(isinstance(s.get("values"), list) and len(s["values"]) == len(chart_labels)
+                    for s in normalized_series)
+        )
+        single_series_ok = (
+            bool(chart_labels)
+            and isinstance(chart_values, list)
+            and bool(chart_values)
             and len(chart_labels) == len(chart_values)
         )
+        chart_renderable = bool(chart_spec) and (multi_series_ok or single_series_ok or chart_spec.get("type") in ("pie","map"))
         if chart_spec and not chart_renderable:
             st.info("⚠️ The analysis didn't return enough chart data. Try rephrasing your question or being more specific.")
         if chart_renderable:
