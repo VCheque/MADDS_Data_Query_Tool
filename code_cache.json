@@ -828,5 +828,15 @@
     "prompt_signature": "1980d8e865cf",
     "provider": "anthropic",
     "provider_model": "claude-haiku-4-5-20251001"
+  },
+  "ccc836c3c846cca4": {
+    "code": "import json\nimport pandas as pd\n\n# Ensure we're working with Complete status only\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Filter to Massachusetts\ndf_ma = df_complete[df_complete['StateofOriginCleaned'].str.lower() == 'massachusetts'].copy()\n\n# Helper to count distinct samples\ncount_col = 'id' if 'id' in df_ma.columns else None\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\n# The question asks for \"QTOF results\" — interpret this as confirmed_lab_substances\n# which is the authoritative lab-confirmed column\nsubstances = ['spirochlorphine', 'brorphine', 'cychlorphine']\n\nresults = {}\n\nfor year in [2025, 2026]:\n    year_data = df_ma[df_ma['acquired_date'].dt.year == year].copy()\n    year_counts = {}\n    \n    for subst in substances:\n        # Search confirmed_lab_substances for the substance\n        mask = year_data['confirmed_lab_substances'].fillna('').str.contains(\n            subst, case=False, na=False\n        )\n        count = n_samples(year_data[mask])\n        year_counts[subst] = int(count)\n    \n    results[year] = year_counts\n\n# Compile answer\nanswer_parts = []\nfor year in [2025, 2026]:\n    counts = results[year]\n    total = sum(counts.values())\n    answer_parts.append(\n        f\"{year}: {counts['spirochlorphine']} spirochlorphine, \"\n        f\"{counts['brorphine']} brorphine, {counts['cychlorphine']} cychlorphine \"\n        f\"(total: {total})\"\n    )\n\nanswer_text = \" | \".join(answer_parts)\n\n# Build table\ntable_data = {\n    'headers': ['Substance', '2025', '2026'],\n    'rows': [\n        ['Spirochlorphine', str(results[2025]['spirochlorphine']), str(results[2026]['spirochlorphine'])],\n        ['Brorphine', str(results[2025]['brorphine']), str(results[2026]['brorphine'])],\n        ['Cychlorphine', str(results[2025]['cychlorphine']), str(results[2026]['cychlorphine'])]\n    ]\n}\n\nresult = {\n    'answer': f\"In Massachusetts, {answer_text}. All detections are from lab-confirmed (QTOF) results in the Complete sample set.\",\n    'table': table_data,\n    'detail': 'Counts distinct samples (df[\"id\"].nunique()) where each substance appears in confirmed_lab_substances. Filtered to status=\"Complete\" and StateofOriginCleaned=\"Massachusetts\".'\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "how many samples of spirochlorphine, brorphine, and cychlorphine have been detected in Massachusetts in 2025 and in 2026?  use the QTOF results to generate the counts",
+    "first_seen": "2026-05-07T14:42:03+00:00",
+    "last_used": "2026-05-07T14:42:03+00:00",
+    "hit_count": 1,
+    "prompt_signature": "1980d8e865cf",
+    "provider": "anthropic",
+    "provider_model": "claude-haiku-4-5-20251001"
   }
 }
