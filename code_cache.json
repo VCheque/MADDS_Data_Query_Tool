@@ -1038,5 +1038,15 @@
     "prompt_signature": "1980d8e865cf",
     "provider": "anthropic",
     "provider_model": "claude-haiku-4-5-20251001"
+  },
+  "c00fc5b545d5fe99": {
+    "code": "import pandas as pd\nimport json\n\n# Filter for complete samples from Providence\ndf_providence = df[(df['status'] == 'Complete') & (df['TownofOriginCleaned'].str.lower() == 'providence')]\n\n# Check for purple drugs in confirmed lab substances, active cuts, or FTIR substances\npurple_drug_mask = (\n    df_providence['confirmed_lab_substances'].fillna('').str.contains('purple', case=False, na=False) |\n    df_providence['ActiveCuts'].fillna('').str.contains('purple', case=False, na=False) |\n    df_providence['preliminary_ftir_substances'].fillna('').str.contains('purple', case=False, na=False)\n)\n\n# Count unique samples\npurple_samples_count = df_providence[purple_drug_mask]['id'].nunique()\n\n# Prepare the result\nresult = {\n    \"answer\": f\"{purple_samples_count} samples of purple drugs have been found in Providence.\",\n    \"metrics\": [{\"label\": \"Purple Drug Samples\", \"value\": purple_samples_count}],\n    \"detail\": \"Filtered for complete samples from Providence and checked for 'purple' in lab results, active cuts, or FTIR substances.\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "how many samples of purple drugs have been found in Providence",
+    "first_seen": "2026-05-07T20:18:52+00:00",
+    "last_used": "2026-05-07T20:18:52+00:00",
+    "hit_count": 1,
+    "prompt_signature": "1980d8e865cf",
+    "provider": "openai",
+    "provider_model": "gpt-4o-mini"
   }
 }
