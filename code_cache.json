@@ -808,5 +808,15 @@
     "prompt_signature": "1980d8e865cf",
     "provider": "anthropic",
     "provider_model": "claude-haiku-4-5-20251001"
+  },
+  "ca87b6ee08aa9097": {
+    "code": "import json\nimport pandas as pd\n\n# Defensive setup\ncount_col = 'id' if 'id' in df.columns else None\n\ndef n_samples(frame):\n    return frame['id'].nunique() if count_col else len(frame)\n\n# Filter to Complete status\ndf_complete = df[df['status'] == 'Complete'].copy()\n\n# Filter to Massachusetts\ndf_ma = df_complete[df_complete['StateofOriginCleaned'].str.lower() == 'massachusetts'].copy()\n\n# Ensure acquired_date is datetime\ndf_ma['acquired_date'] = pd.to_datetime(df_ma['acquired_date'], errors='coerce')\n\n# Search for \"orphine\" (case-insensitive) in confirmed_lab_substances, \n# preliminary_ftir_substances, and ActiveCuts\nname = 'orphine'\nm1 = df_ma['confirmed_lab_substances'].fillna('').str.contains(name, case=False, na=False)\nm2 = df_ma['preliminary_ftir_substances'].fillna('').str.contains(name, case=False, na=False)\nm3 = df_ma['ActiveCuts'].fillna('').str.contains(name, case=False, na=False)\n\ndf_orphine = df_ma[m1 | m2 | m3].copy()\n\n# Split by year\ndf_2025 = df_orphine[df_orphine['acquired_date'].dt.year == 2025]\ndf_2026 = df_orphine[df_orphine['acquired_date'].dt.year == 2026]\n\ncount_2025 = n_samples(df_2025)\ncount_2026 = n_samples(df_2026)\n\nresult = {\n    \"answer\": f\"In Massachusetts, {count_2025} orphine samples were detected in 2025 and {count_2026} in 2026 (among 'Complete' status records). This analysis searched across confirmed lab results, preliminary FTIR results, and detected active cuts.\",\n    \"metrics\": [\n        {\"label\": \"2025 Samples (MA)\", \"value\": count_2025},\n        {\"label\": \"2026 Samples (MA)\", \"value\": count_2026}\n    ],\n    \"detail\": \"Filtered to Massachusetts, status='Complete', searched for 'orphine' (case-insensitive) in confirmed_lab_substances, preliminary_ftir_substances, and ActiveCuts columns. Counted unique samples via df['id'].nunique().\"\n}\n\nprint(json.dumps(result, default=str))",
+    "first_question": "how many orphine samples have been detected in Massachusetts in 2025 and in 2026?",
+    "first_seen": "2026-05-07T14:39:32+00:00",
+    "last_used": "2026-05-07T14:39:32+00:00",
+    "hit_count": 1,
+    "prompt_signature": "1980d8e865cf",
+    "provider": "anthropic",
+    "provider_model": "claude-haiku-4-5-20251001"
   }
 }
